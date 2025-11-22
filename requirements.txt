@@ -1,0 +1,15 @@
+sentence-transformers
+python-dotenv
+groq
+langchain-groq
+beautifulsoup4
+pypdf
+langchain-qdrant
+qdrant-client
+llama-index-core
+llama-index-readers-file
+llama-index-embeddings-huggingface
+llama-index-vector-stores-qdrant
+pandas
+llama-index-llms-groq
+chainlit
