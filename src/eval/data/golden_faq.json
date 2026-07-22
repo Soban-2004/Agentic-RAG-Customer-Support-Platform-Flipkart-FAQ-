@@ -1,0 +1,26 @@
+[
+  {
+    "question": "What should I do if my order is approved but hasn't been shipped yet?",
+    "reference": "Sellers usually ship orders 1-2 business days before the delivery date so that they reach you on time. In case your order hasn't been shipped within this time please contact our Customer Support so that we can look into it."
+  },
+  {
+    "question": "How is processing fee calculated for Flipkart EMI?",
+    "reference": "A fee of 1.25% + GST (no minimum cap) will be applicable on EMI tenures of 2 or 3 months. A processing fee of 1.5% + GST (no minimum cap) will be applicable on a 6-month EMI tenure. A processing fee of 2% + GST (no minimum cap) will be applicable on EMI tenures of 9 or 12 months. This fee will be levied on each EMI transaction and will be visible in your subsequent bill. The processing fee is exclusive of applicable taxes and will be effective from 15th Nov ‘24."
+  },
+  {
+    "question": "Can I modify/change the specification for the ordered product without cancelling it?",
+    "reference": "No, once an order is placed the specification of the product can not be modified."
+  },
+  {
+    "question": "How can I add extra baggage/meals to my flight booking? What are the charges?",
+    "reference": "You can get in touch with Flipkart Travel Helpdesk at 8828828282 for the addition of extra baggage/meals to your flight booking. It is crucial to keep in mind that the charges will vary for every airline as per your requirements."
+  },
+  {
+    "question": "I didn’t get the Gift Card I ordered for. What should I do?",
+    "reference": "Please check your inbox and spam folder for the Gift Card.\nIf you don’t find the card in spite of this, you can get the card details from your Flipkart account. To do this,\nVisit your Orders\nGo the order for the Gift Card\nClick on resend Gift Card details"
+  },
+  {
+    "question": "My DOR television has been delivered. When will the technician visit?",
+    "reference": "A technician will visit within 24-72 of the television being delivered to assist with the installation."
+  }
+]

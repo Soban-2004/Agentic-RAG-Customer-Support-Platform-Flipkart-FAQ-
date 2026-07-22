@@ -1,0 +1,54 @@
+# AI Gateway routing config.
+#
+# Every LLM call in the app goes through src/gateway/llm_gateway.py, which reads
+# this file instead of any code talking to a provider SDK directly. To add a new
+# provider (OpenAI, Anthropic, ...), add an entry here + its api_key_env var —
+# LiteLLM handles the rest.
+
+default_model: fast
+timeout_seconds: 30
+# Kept low deliberately: Groq's Llama models occasionally emit a malformed
+# `<function=...>` tool-call that their own API then rejects (a model/provider
+# quirk, not specific to one model size). Each retry AND the automatic
+# fallback-to-the-other-model both re-send the full request, so a higher
+# max_retries multiplies token usage on every transient failure -- which on a
+# free-tier TPM budget causes more rate-limit errors than it fixes.
+max_retries: 1
+
+models:
+  # Primary model. Despite the "fast" key name this is llama-3.3-70b, not the
+  # smaller 8b model -- empirically 70b hits the malformed-tool-call quirk
+  # above noticeably less often than 8b, and also carries a higher Groq
+  # free-tier TPM quota, so this is a straight upgrade here, not just a
+  # reliability/cost tradeoff.
+  fast:
+    model: groq/llama-3.3-70b-versatile
+    api_key_env: CHATGROQ_API_KEY
+    temperature: 0.2
+    max_tokens: 1024
+
+  # Fallback: smaller/faster model, used automatically if the primary errors/times out.
+  fallback:
+    model: groq/llama-3.1-8b-instant
+    api_key_env: CHATGROQ_API_KEY
+    temperature: 0.2
+    max_tokens: 1024
+
+  # Used specifically for the agent's own tool-call decision step (see
+  # src/agent/chat_agent.py's build_agent -- passed as its `llm`, NOT set as
+  # Settings.llm), not for RAG-answer synthesis or intent classification.
+  # Those two are plain text generation and were never the problem; the
+  # actual failure mode was Groq occasionally emitting a malformed tool-call
+  # that its own API rejects, which a bug in litellm's Groq-specific
+  # streaming-error parser then turns into an ugly crash instead of a clean
+  # error (`ValueError: invalid literal for int() with base 10:
+  # 'tool_use_failed'`) -- see README's Agent + Planning section. Routing
+  # tool-calling to a different provider sidesteps that crash surface
+  # entirely. Served through a local Ollama daemon (`ollama pull
+  # gemma4:cloud`, requires `ollama signin` once) that proxies to Ollama
+  # Cloud -- no API key needed here, auth happens at the daemon level.
+  tool_call:
+    model: ollama_chat/gemma4:cloud
+    api_base: http://localhost:11434
+    temperature: 0.2
+    max_tokens: 1024

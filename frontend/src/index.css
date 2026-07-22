@@ -1,0 +1,202 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Flipkart-brand light/dark themes. Every color is a CSS custom property so
+   the whole app can retheme at runtime (no rebuild, no flash of the wrong
+   Tailwind utilities) -- switching is just flipping `data-theme` on <html>
+   (see useTheme.ts) or, with no explicit choice, following the OS via the
+   prefers-color-scheme block below. Light mode is a clearly-tinted cool
+   blue-gray (ties to the brand blue) -- not an off-white, not a gray with a
+   faint blue whisper, an actually visible color. */
+:root {
+  --bg: #d7e1f2;
+  --surface: #e9effa;
+  --muted-surface: #c7d3e8;
+  --border: rgba(15, 23, 42, 0.12);
+  --hover: rgba(15, 23, 42, 0.06);
+  --brand: #2874f0;
+  --brand-hover: #1c5fd1;
+  --brand-soft: #d2e2fc;
+  --brand-ring: rgba(40, 116, 240, 0.18);
+  --ink: #1a2438;
+  --muted: #5b6b85;
+  --accent: #ffc200;
+  --success: #388e3c;
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08), 0 8px 20px -10px rgba(15, 23, 42, 0.16);
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, 0.1), 0 12px 28px -10px rgba(15, 23, 42, 0.2);
+  --shimmer-base: #8695b0;
+  --shimmer-highlight: #2874f0;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #15171c;
+  --surface: #1e2128;
+  --muted-surface: #2b2e36;
+  --border: rgba(255, 255, 255, 0.08);
+  --hover: rgba(255, 255, 255, 0.06);
+  --brand: #4c8dff;
+  --brand-hover: #6ba3ff;
+  --brand-soft: rgba(76, 141, 255, 0.16);
+  --brand-ring: rgba(76, 141, 255, 0.25);
+  --ink: #ecedee;
+  --muted: #9096a2;
+  --accent: #ffc200;
+  --success: #4caf50;
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.15);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 20px -10px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 28px -10px rgba(0, 0, 0, 0.6);
+  --shimmer-base: #5b6270;
+  --shimmer-highlight: #6ba3ff;
+  color-scheme: dark;
+}
+
+/* No explicit user choice ("system") -- follow the OS, same values as
+   [data-theme="dark"] above. useTheme.ts removes the data-theme attribute
+   entirely for "system" so this is the block that applies. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #15171c;
+    --surface: #1e2128;
+    --muted-surface: #2b2e36;
+    --border: rgba(255, 255, 255, 0.08);
+    --hover: rgba(255, 255, 255, 0.06);
+    --brand: #4c8dff;
+    --brand-hover: #6ba3ff;
+    --brand-soft: rgba(76, 141, 255, 0.16);
+    --brand-ring: rgba(76, 141, 255, 0.25);
+    --ink: #ecedee;
+    --muted: #9096a2;
+    --accent: #ffc200;
+    --success: #4caf50;
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.15);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 20px -10px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 28px -10px rgba(0, 0, 0, 0.6);
+    --shimmer-base: #5b6270;
+    --shimmer-highlight: #6ba3ff;
+    color-scheme: dark;
+  }
+}
+
+/* Tailwind theme tokens -- each points at the runtime-switchable custom
+   property above, so bg-bg/bg-surface/text-ink/etc utilities retheme
+   instantly without regenerating any CSS. */
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-muted-surface: var(--muted-surface);
+  --color-border: var(--border);
+  --color-hover: var(--hover);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --font-heading: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* The one easing curve reused everywhere -- see wishlist's "motion
+     consistency" rule. UI elements: 200-300ms with this curve. Panel/page
+     transitions: 400ms, same curve. */
+  --ease-ui: cubic-bezier(0, 0, 0.2, 1);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  transition: background-color 0.2s var(--ease-ui), color 0.2s var(--ease-ui);
+}
+
+/* @tailwindcss/typography ships its own fixed gray palette for `.prose`
+   content (headings, bold, links, code, ...) via --tw-prose-* variables --
+   it doesn't know about our theme tokens, so bold text stayed near-black
+   even in dark mode (invisible on a dark surface). Point every one of those
+   variables at our theme tokens instead so bot-message markdown follows
+   light/dark like everything else. */
+.prose {
+  --tw-prose-body: var(--color-ink);
+  --tw-prose-headings: var(--color-ink);
+  --tw-prose-lead: var(--color-muted);
+  --tw-prose-links: var(--color-brand);
+  --tw-prose-bold: var(--color-ink);
+  --tw-prose-counters: var(--color-muted);
+  --tw-prose-bullets: var(--color-border);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-quotes: var(--color-ink);
+  --tw-prose-quote-borders: var(--color-border);
+  --tw-prose-captions: var(--color-muted);
+  --tw-prose-kbd: var(--color-ink);
+  --tw-prose-code: var(--color-ink);
+  --tw-prose-pre-code: var(--color-ink);
+  --tw-prose-pre-bg: var(--color-muted-surface);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
+}
+
+/* Status-label shimmer while waiting on a turn (guardrail scan, tool lookup,
+   etc) -- a moving highlight sweeping across the text, not just a flat pulse. */
+@keyframes shimmer-sweep {
+  0% { background-position: 150% 0; }
+  100% { background-position: -50% 0; }
+}
+.shimmer-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--shimmer-base) 40%,
+    var(--shimmer-highlight) 50%,
+    var(--shimmer-base) 60%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-sweep 1.6s linear infinite;
+}
+
+/* Soft pulsing gradient bar for the "thinking" state -- see TypingIndicator. */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.45; transform: scaleX(0.85); }
+  50% { opacity: 1; transform: scaleX(1); }
+}
+.pulse-bar {
+  background-image: linear-gradient(90deg, var(--color-brand), var(--color-accent));
+  animation: pulse-glow 1.4s var(--ease-ui) infinite;
+  transform-origin: left center;
+}
+
+/* Blinking block cursor at the tail of an in-progress streamed response. */
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.stream-cursor {
+  display: inline-block;
+  width: 0.5em;
+  margin-left: 1px;
+  background: var(--color-brand);
+  animation: blink 0.9s step-end infinite;
+}
+
+/* Two-layer soft elevation -- replaces 1px borders on cards/bubbles. */
+.elevate-sm {
+  box-shadow: var(--shadow-sm);
+}
+.elevate-md {
+  box-shadow: var(--shadow-md);
+}

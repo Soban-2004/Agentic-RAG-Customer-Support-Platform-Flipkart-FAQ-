@@ -1,15 +1,31 @@
-sentence-transformers
 python-dotenv
-groq
-langchain-groq
-beautifulsoup4
-pypdf
-langchain-qdrant
-qdrant-client
+qdrant-client==1.16.0
 llama-index-core
 llama-index-readers-file
-llama-index-embeddings-huggingface
 llama-index-vector-stores-qdrant
-pandas
-llama-index-llms-groq
-chainlit
+llama-index-llms-litellm
+llama-index-embeddings-fastembed
+fastembed
+fastapi
+uvicorn[standard]
+pyjwt
+anyio
+litellm
+llm-guard
+# Pinned direct wheel rather than left to llm_guard's Sensitive/Presidio output
+# scanner to lazy-download on first use: that on-demand download writes new
+# files into venv/site-packages, which `uvicorn --reload` (default: watches
+# the whole project dir) sees as a source change and force-restarts the
+# server mid-request -- killed the first real chat message in testing. Now
+# installed up front, so it's already present before the app ever starts.
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+pyyaml
+mcp
+llama-index-tools-mcp
+sentence-transformers
+sqlalchemy
+asyncpg
+bcrypt
+ragas
+langfuse
+openinference-instrumentation-llama-index

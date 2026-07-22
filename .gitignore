@@ -2,3 +2,19 @@
 venv/
 __pycache__/
 *.pyc
+
+# Selenium Edge driver + its license bundle (18MB+16MB, not project source)
+msedgedriver.exe
+Driver_Notes/
+
+# Local/embedded Qdrant storage (see src/common/qdrant_factory.py)
+qdrant_storage/
+
+# Mock MCP tools backend (auto-created + seeded, see src/tools/mock_backend.py)
+data/mock_backend.db
+
+# Persistent session chat memory (auto-created, see src/memory/persistent_memory.py)
+data/chat_memory.db
+
+# Eval run reports (generated, see src/eval/run_eval.py)
+src/eval/results/

@@ -1,0 +1,43 @@
+# Ignore virtual environments
+venv/
+.venv/
+
+# Ignore Python caches
+__pycache__/
+*.pyc
+
+# Ignore local data
+data/
+datasets/
+downloads/
+cache/
+tmp/
+*.log
+
+# Ignore Git stuff
+.git/
+.gitignore
+
+# Frontend build artifacts -- built fresh inside the image (see Dockerfile)
+frontend/node_modules/
+frontend/dist/
+
+# Ignore Qdrant local DB
+qdrant/
+qdrant_storage/
+
+# Ignore model files
+*.bin
+*.ckpt
+*.pt
+
+# Ignore OS files
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# Do not include chrome/chromedriver folders
+chromedriver/
+selenium/

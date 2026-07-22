@@ -1,0 +1,56 @@
+[
+  {
+    "name": "order_status_out_for_delivery",
+    "message": "What's the status of order FK1001?",
+    "expected_tool": "get_order_status",
+    "expect_contains_any": ["Out for Delivery"]
+  },
+  {
+    "name": "order_status_delivered",
+    "message": "Can you check order FK1002 for me?",
+    "expected_tool": "get_order_status",
+    "expect_contains_any": ["Delivered"]
+  },
+  {
+    "name": "refund_status_completed",
+    "message": "What's happening with refund RF2001?",
+    "expected_tool": "get_refund_status",
+    "expect_contains_any": ["Refund Completed", "completed"]
+  },
+  {
+    "name": "refund_status_processing",
+    "message": "Check the status of my refund RF2002 please.",
+    "expected_tool": "get_refund_status",
+    "expect_contains_any": ["Processing", "Approved"]
+  },
+  {
+    "name": "unknown_order_id_no_crash",
+    "message": "What's the status of order FK9999?",
+    "expected_tool": "get_order_status",
+    "expect_contains_any": ["not found", "couldn't find", "unable to find", "no order"]
+  },
+  {
+    "name": "escalate_to_human",
+    "message": "This is unacceptable, I want to talk to a human agent about my damaged laptop stand from order FK1004.",
+    "expected_tool": "escalate_to_human",
+    "expect_contains_any": ["TCK-", "ticket", "escalat"]
+  },
+  {
+    "name": "add_order_note",
+    "message": "For order FK1003, please note I always want the shoebox left with my building security guard.",
+    "expected_tool": "add_order_note",
+    "expect_contains_any": ["note", "noted", "saved", "recorded"]
+  },
+  {
+    "name": "faq_question_uses_search_faq_not_order_tool",
+    "message": "What is Flipkart's general return policy?",
+    "expected_tool": "search_faq",
+    "expect_contains_any": ["return", "days"]
+  },
+  {
+    "name": "small_talk_calls_no_tool",
+    "message": "Hi there, how are you today?",
+    "expected_tool": null,
+    "expect_contains_any": []
+  }
+]
