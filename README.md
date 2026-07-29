@@ -20,10 +20,11 @@ automated evaluation, and full request tracing all sit between the chat UI and t
 
 ## 🎥 Demo
 
-![Demo](assets/demo.gif)
-
-**Full walkthrough:** https://github.com/your-repo/issues/1#issuecomment-xxxx
-
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/b327814f-7b5b-45f8-afca-d92dc2ca671e">
+    <img src="https://placehold.co/900x500?text=▶+Watch+Demo" width="90%" alt="Watch Demo">
+  </a>
+</p>
 ## Table of contents
 
 - [Demo](#demo)
