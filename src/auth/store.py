@@ -38,6 +38,41 @@ async def verify_password(database_url: str, username: str, password: str) -> bo
     )
 
 
+async def register_user(database_url: str, username: str, password: str) -> bool:
+    """Public self-serve signup (src/api/auth.py's /register route) --
+    insert-only, returns False if the username is already taken rather than
+    silently overwriting it. Deliberately separate from create_user() below:
+    that one upserts (resets the password on an existing username), which is
+    the right behavior for an admin deliberately resetting a demo/admin
+    account via the CLI, but would be an account-takeover bug if reused here
+    -- anyone could "register" someone else's existing username to silently
+    hijack their password.
+    """
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    conn = await asyncpg.connect(_asyncpg_dsn(database_url))
+    try:
+        # The UNIQUE constraint on "identifier" (db/schema.sql) is the real
+        # guard against a race between two concurrent signups for the same
+        # username -- caught here rather than relied on as a pre-check alone,
+        # since a plain SELECT-then-INSERT has a TOCTOU gap a public,
+        # uncontrolled-concurrency endpoint can actually hit.
+        try:
+            await conn.execute(
+                'INSERT INTO users ("id", "identifier", "createdAt", "metadata", "password_hash") '
+                "VALUES ($1, $2, $3, $4, $5)",
+                str(uuid.uuid4()),
+                username,
+                datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "{}",
+                password_hash,
+            )
+            return True
+        except asyncpg.UniqueViolationError:
+            return False
+    finally:
+        await conn.close()
+
+
 async def create_user(database_url: str, username: str, password: str) -> None:
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     conn = await asyncpg.connect(_asyncpg_dsn(database_url))

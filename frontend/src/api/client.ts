@@ -57,6 +57,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  register: (username: string, password: string) =>
+    request<User>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
   me: () => request<User>("/api/auth/me"),
   listThreads: () => request<ThreadSummary[]>("/api/threads"),
