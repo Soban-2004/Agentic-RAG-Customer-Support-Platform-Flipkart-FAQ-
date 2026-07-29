@@ -18,20 +18,11 @@ automated evaluation, and full request tracing all sit between the chat UI and t
   <img alt="Langfuse" src="https://img.shields.io/badge/Langfuse-observability-orange">
 </p>
 
-## Demo
+## 🎥 Demo
 
-<!--
-  Add the demo video here. Easiest way on GitHub, no repo storage needed:
-    1. Open a new issue on this repo (or a PR comment box) -- don't submit it.
-    2. Drag and drop the video file into the comment textbox.
-    3. GitHub uploads it and inserts a URL like
-       https://github.com/<you>/<repo>/assets/<id>/xxxxxxxx-xxxx-xxxx.mp4
-    4. Copy that URL, replace this whole comment block with it on its own line
-       (GitHub auto-renders an inline video player for that URL pattern -- no
-       <video> tag needed), and delete the placeholder line below.
--->
-
-*Demo video coming soon.*
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/e0e801a2-3d6a-4d72-ab79-064b15b4d020" controls width="90%"></video>
+</p>
 
 ## Table of contents
 
