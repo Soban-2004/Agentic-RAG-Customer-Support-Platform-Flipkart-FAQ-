@@ -1,11 +1,19 @@
+# Lean production set -- deliberately excludes the local-model fallback
+# packages (fastembed, sentence-transformers -- see requirements-dev.txt).
+# Those pull in torch + the full CUDA toolkit (multiple GB, and enough RAM
+# just from being importable to blow a free-tier host's memory limit even
+# when never actually used -- confirmed live: a deploy OOM'd on Render with
+# them installed, despite the app's own code never importing them when
+# COHERE_API_KEY is set, because some dependency does opportunistic
+# "is this optional package installed" detection). This file is what the
+# Dockerfile actually builds from, so a deployed container physically cannot
+# import them, not just "shouldn't."
 python-dotenv
 qdrant-client==1.16.0
 llama-index-core
 llama-index-readers-file
 llama-index-vector-stores-qdrant
 llama-index-llms-litellm
-llama-index-embeddings-fastembed
-fastembed
 fastapi
 uvicorn[standard]
 pyjwt
@@ -14,7 +22,6 @@ litellm
 pyyaml
 mcp
 llama-index-tools-mcp
-sentence-transformers
 llama-index-postprocessor-cohere-rerank
 llama-index-embeddings-cohere
 sqlalchemy

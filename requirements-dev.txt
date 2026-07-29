@@ -1,0 +1,9 @@
+# Local dev only -- adds the local-model fallback path (used automatically
+# by src/common/embed_factory.py and src/agent/chat_agent.py's reranker
+# whenever COHERE_API_KEY isn't set) on top of the lean production set.
+# NOT installed in the Docker image / deployed container -- see
+# requirements.txt's own comment for why that matters, not just why it's tidy.
+-r requirements.txt
+llama-index-embeddings-fastembed
+fastembed
+sentence-transformers

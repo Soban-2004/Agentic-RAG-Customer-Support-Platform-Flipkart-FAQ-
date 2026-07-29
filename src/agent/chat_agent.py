@@ -78,12 +78,17 @@ def _build_reranker():
 
 
 def build_faq_query_engine(index: VectorStoreIndex) -> BaseQueryEngine:
+    # Hybrid (dense+sparse) query mode only works against a vector store that
+    # was actually opened with enable_hybrid=True (see main.py) -- which is
+    # itself conditional on not using Cohere, see that comment for why.
+    query_kwargs = {"similarity_top_k": HYBRID_CANDIDATES}
+    if not use_cohere_embeddings():
+        query_kwargs["vector_store_query_mode"] = "hybrid"
+        query_kwargs["sparse_top_k"] = HYBRID_CANDIDATES
     return index.as_query_engine(
-        vector_store_query_mode="hybrid",
-        similarity_top_k=HYBRID_CANDIDATES,
-        sparse_top_k=HYBRID_CANDIDATES,
         node_postprocessors=[_build_reranker()],
         text_qa_template=FAQ_QA_TEMPLATE,
+        **query_kwargs,
     )
 
 SYSTEM_PROMPT = (

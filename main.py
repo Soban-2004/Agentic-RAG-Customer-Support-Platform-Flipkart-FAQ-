@@ -35,7 +35,7 @@ from src.api.auth import router as auth_router  # noqa: E402
 from src.api.chat_ws import router as chat_ws_router  # noqa: E402
 from src.api.config import DATABASE_URL  # noqa: E402,F401 -- import validates it's set
 from src.api.threads import router as threads_router  # noqa: E402
-from src.common.embed_factory import build_embed_model, embed_dim  # noqa: E402
+from src.common.embed_factory import build_embed_model, embed_dim, use_cohere_embeddings  # noqa: E402
 from src.common.qdrant_factory import get_async_qdrant_client, is_remote  # noqa: E402
 from src.gateway.cache import SemanticCache  # noqa: E402
 from src.gateway.llm_gateway import build_gateway_llm  # noqa: E402
@@ -62,12 +62,18 @@ async def lifespan(_app: FastAPI):
         "qdrant_mode=%s", "remote (QDRANT_URL set)" if is_remote() else "local (embedded, on-disk)"
     )
     aclient = get_async_qdrant_client()
-    vector_store = QdrantVectorStore(
-        aclient=aclient,
-        collection_name=COLLECTION_NAME,
-        enable_hybrid=True,
-        fastembed_sparse_model="Qdrant/bm25",
-    )
+    # Hybrid (dense + BM25 sparse) search is local-dev only -- the sparse
+    # side loads its own model via `fastembed` regardless of which *dense*
+    # embedder is active, so switching the dense embedder to Cohere alone
+    # didn't remove it (measured: ~224MB, the actual cause of an early
+    # deploy OOM on a free-tier host's 512MB limit). Collections built with
+    # sparse vectors present still work fine queried dense-only -- the extra
+    # vectors just go unused -- so this doesn't require re-ingesting.
+    vector_store_kwargs = {"aclient": aclient, "collection_name": COLLECTION_NAME}
+    if not use_cohere_embeddings():
+        vector_store_kwargs["enable_hybrid"] = True
+        vector_store_kwargs["fastembed_sparse_model"] = "Qdrant/bm25"
+    vector_store = QdrantVectorStore(**vector_store_kwargs)
     index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
     state.cache = SemanticCache(client=aclient, embed_model=embed_model, vector_size=embed_dim())

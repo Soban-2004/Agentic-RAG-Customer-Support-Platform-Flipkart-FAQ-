@@ -214,8 +214,13 @@ data/
    ```bash
    python -m venv venv
    venv\Scripts\activate       # Windows
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
    ```
+   `requirements-dev.txt` adds the local-model fallback path (used automatically whenever
+   `COHERE_API_KEY` isn't set — see [Configuration](#configuration)) on top of the lean
+   `requirements.txt` the Docker image actually builds from. Deploying without a Cohere key
+   works too, it just means installing the heavier local-model set — see the memory deep dive
+   below for why that's a meaningfully different footprint, not just a style preference.
 
 3. **Frontend dependencies** (Node.js 20+):
    ```bash
