@@ -21,10 +21,11 @@ automated evaluation, and full request tracing all sit between the chat UI and t
 ## 🎥 Demo
 
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/b327814f-7b5b-45f8-afca-d92dc2ca671e">
-    <img src="https://placehold.co/900x500?text=▶+Watch+Demo" width="90%" alt="Watch Demo">
+  <a href="https://github.com/Soban-2004/Agentic-RAG-Customer-Support-Platform-Flipkart-FAQ-/issues/1#issuecomment-5117425187">
+    <img src="https://placehold.co/900x500?text=%E2%96%B6%20Watch%20Demo" width="90%" alt="Watch Demo">
   </a>
 </p>
+
 ## Table of contents
 
 - [Demo](#demo)
