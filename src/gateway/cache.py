@@ -65,9 +65,12 @@ class SemanticCache:
                 )
             self._ready = True
 
-    async def get(self, query: str) -> Optional[str]:
+    async def get(self, query: str, embedding: Optional[list[float]] = None) -> Optional[str]:
         await self._ensure_collection()
-        vector = await self.embed_model.aget_query_embedding(query)
+        # Caller may already have embedded this exact text (chat_ws.py does,
+        # for the cacheable-intent path) -- reuse it instead of a redundant
+        # Cohere/embed-API round trip for the identical string.
+        vector = embedding if embedding is not None else await self.embed_model.aget_query_embedding(query)
         result = await self.client.query_points(
             collection_name=CACHE_COLLECTION,
             query=vector,
@@ -91,9 +94,9 @@ class SemanticCache:
         logger.info("cache_hit query=%r score=%.3f", query[:80], hits[0].score)
         return payload.get("response")
 
-    async def set(self, query: str, response: str) -> None:
+    async def set(self, query: str, response: str, embedding: Optional[list[float]] = None) -> None:
         await self._ensure_collection()
-        vector = await self.embed_model.aget_query_embedding(query)
+        vector = embedding if embedding is not None else await self.embed_model.aget_query_embedding(query)
         # Qdrant point IDs must be a UUID or an unsigned int -- uuid5 gives a
         # deterministic UUID from the query text, so re-caching the same query
         # (or a near-duplicate that hashes the same normalized text) upserts in place.

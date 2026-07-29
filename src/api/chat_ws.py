@@ -35,6 +35,7 @@ from llama_index.core import Settings
 from llama_index.core.agent.workflow import AgentStream, ToolCall
 from workflows.errors import WorkflowRuntimeError
 
+from src.agent.chat_agent import clear_precomputed_query_embedding, set_precomputed_query_embedding
 from src.agent.planner import CACHEABLE_INTENTS, classify_intent
 from src.api import security, state
 from src.api.config import DATABASE_URL
@@ -104,6 +105,19 @@ async def _handle_turn(websocket: WebSocket, thread_id: str, username: str, memo
             await _run_turn(websocket, thread_id, memory, content)
 
 
+async def _persist_assistant_reply(thread_id: str, content: str) -> None:
+    """Called AFTER the "done" frame is already on the wire -- the user
+    already has their answer, so a persistence failure here isn't a turn
+    failure to recover from, just something to log. Worst case on a real
+    failure: a reload/thread-revisit is missing this one message, an
+    acceptable rare trade against making every user wait on a Neon
+    round-trip whose result they can't actually see."""
+    try:
+        await chat_store.add_message(DATABASE_URL, thread_id, "assistant", content)
+    except Exception:
+        logger.exception("chat_ws: failed to persist assistant reply after it was already sent")
+
+
 async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) -> None:
     # 1. Guardrails: input scan. Blocked messages never reach the LLM/cache/tools.
     # Consistently the single biggest chunk of a turn's latency (several
@@ -118,9 +132,9 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
             "Sorry, I can't help with that request. Please ask a Flipkart "
             "order, payment, refund, or returns question."
         )
-        await chat_store.add_message(DATABASE_URL, thread_id, "assistant", reply)
         await _stream_text(websocket, reply)
         await websocket.send_json({"type": "done", "content": reply})
+        await _persist_assistant_reply(thread_id, reply)
         return
 
     # 2. Planning: classify intent. Only FAQ/general_chat may use the semantic
@@ -129,14 +143,27 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
     logger.info("intent=%s query=%r", intent.value, query[:80])
     cacheable = intent in CACHEABLE_INTENTS
 
+    # Embedded once (if at all) and reused for the cache check below, the
+    # cache write at the end of this turn, and -- when the agent happens to
+    # call search_faq with this exact same text -- that retrieval too (see
+    # _CachedQueryEngineTool in chat_agent.py). Each reuse skips a redundant
+    # Cohere/embed-API round trip for text we've already embedded this turn.
+    query_embedding: list[float] | None = None
+
     if cacheable and state.cache:
-        cached_response = await state.cache.get(query)
+        query_embedding = await Settings.embed_model.aget_query_embedding(query)
+        cached_response = await state.cache.get(query, embedding=query_embedding)
         score_cache_result(hit=cached_response is not None)
         if cached_response is not None:
-            await chat_store.add_message(DATABASE_URL, thread_id, "assistant", cached_response)
             await _stream_text(websocket, cached_response)
             await websocket.send_json({"type": "done", "content": cached_response})
+            await _persist_assistant_reply(thread_id, cached_response)
             return
+
+    if query_embedding is not None:
+        set_precomputed_query_embedding(query, query_embedding)
+    else:
+        clear_precomputed_query_embedding()
 
     # 3. Run the agent, streaming the response token-by-token.
     await websocket.send_json({"type": "status", "label": "Thinking..."})
@@ -195,14 +222,14 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
     if not did_stream:
         await _stream_text(websocket, sanitized_response)
 
-    await chat_store.add_message(DATABASE_URL, thread_id, "assistant", sanitized_response)
     await websocket.send_json({"type": "done", "content": sanitized_response})
+    await _persist_assistant_reply(thread_id, sanitized_response)
 
     # 5. Cache only clean, cache-eligible, successful responses -- never cache
     # something an output scanner flagged, a tool-routed (dynamic) answer, or
     # an error message from a failed/overrun agent run.
     if cacheable and state.cache and triggered_scanner is None and agent_succeeded:
-        await state.cache.set(query, sanitized_response)
+        await state.cache.set(query, sanitized_response, embedding=query_embedding)
 
 
 @router.websocket("/ws/chat/{thread_id}")

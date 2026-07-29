@@ -11,16 +11,19 @@ talks to them over the actual MCP client/server protocol, the same way it
 would talk to a real external tool server.
 """
 
+import contextvars
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from llama_index.core import PromptTemplate, VectorStoreIndex
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.base.base_query_engine import BaseQueryEngine
 from llama_index.core.llms import LLM
+from llama_index.core.schema import QueryBundle
 from llama_index.core.tools import FunctionTool, QueryEngineTool
+from llama_index.core.tools.types import ToolOutput
 from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
 
 from src.common.embed_factory import use_cohere_embeddings
@@ -63,6 +66,54 @@ FAQ_QA_TEMPLATE = PromptTemplate(
     "Question: {query_str}\n"
     "Answer: "
 )
+
+
+# Set by chat_ws.py right before agent.run() (task-local via contextvars,
+# so concurrent WS connections/turns never see each other's value), read by
+# _CachedQueryEngineTool.acall() below. Lets search_faq reuse the embedding
+# already computed for that turn's semantic-cache check instead of a second,
+# redundant Cohere/embed-API round trip for the identical text -- but ONLY
+# when the agent's tool-call argument matches that text exactly. The agent
+# can rephrase/consolidate the query before calling search_faq, and
+# retrieving against a precomputed embedding for different text than what's
+# actually being searched would be a silent correctness bug (wrong results,
+# no error) -- the exact-match gate exists specifically to make that
+# impossible, at the cost of only saving the round-trip on the common case
+# where the agent passes the question through unchanged.
+_precomputed_query_embedding: contextvars.ContextVar[Optional[tuple[str, list[float]]]] = (
+    contextvars.ContextVar("precomputed_query_embedding", default=None)
+)
+
+
+def set_precomputed_query_embedding(query: str, embedding: list[float]) -> None:
+    _precomputed_query_embedding.set((query, embedding))
+
+
+def clear_precomputed_query_embedding() -> None:
+    _precomputed_query_embedding.set(None)
+
+
+class _CachedQueryEngineTool(QueryEngineTool):
+    """QueryEngineTool that reuses a precomputed query embedding (see above)
+    when the agent's tool-call argument matches the text it was computed for
+    exactly. Any mismatch falls back to QueryEngineTool's normal behavior --
+    a fresh, correctness-safe re-embed."""
+
+    async def acall(self, *args: Any, **kwargs: Any) -> ToolOutput:
+        query_str = self._get_query_str(*args, **kwargs)
+        cached = _precomputed_query_embedding.get()
+        query_input = (
+            QueryBundle(query_str=query_str, embedding=cached[1])
+            if cached is not None and cached[0] == query_str
+            else query_str
+        )
+        response = await self._query_engine.aquery(query_input)
+        return ToolOutput(
+            content=str(response),
+            tool_name=self.metadata.get_name(),
+            raw_input={"input": query_str},
+            raw_output=response,
+        )
 
 
 def _build_reranker():
@@ -184,7 +235,7 @@ async def build_agent(index: VectorStoreIndex, llm: LLM) -> FunctionAgent:
     # quality gain, and empirically made the agent noticeably more likely to
     # call search_faq repeatedly (each extra round-trip is another chance to
     # hit Groq's occasional malformed-tool-call quirk and retry/re-decide).
-    search_faq_tool = QueryEngineTool.from_defaults(
+    search_faq_tool = _CachedQueryEngineTool.from_defaults(
         query_engine=build_faq_query_engine(index),
         name="search_faq",
         description=(
