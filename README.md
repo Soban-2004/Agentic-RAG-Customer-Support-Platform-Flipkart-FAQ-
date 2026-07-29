@@ -20,7 +20,7 @@ automated evaluation, and full request tracing all sit between the chat UI and t
 
 ## Demo
 
-<!--
+[<!--
   Add the demo video here. Easiest way on GitHub, no repo storage needed:
     1. Open a new issue on this repo (or a PR comment box) -- don't submit it.
     2. Drag and drop the video file into the comment textbox.
@@ -31,7 +31,7 @@ automated evaluation, and full request tracing all sit between the chat UI and t
        <video> tag needed), and delete the placeholder line below.
 -->
 
-*Demo video coming soon.*
+*Demo video coming soon.*](https://github.com/Soban-2004/Agentic-RAG-Customer-Support-Platform-Flipkart-FAQ-/issues/1#issuecomment-5117425187)
 
 ## Table of contents
 
