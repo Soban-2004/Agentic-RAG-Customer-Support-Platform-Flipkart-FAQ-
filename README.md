@@ -18,13 +18,11 @@ automated evaluation, and full request tracing all sit between the chat UI and t
   <img alt="Langfuse" src="https://img.shields.io/badge/Langfuse-observability-orange">
 </p>
 
-[## 🎥 Demo
+## 🎥 Demo
 
 <p align="center">
-  <a href="https://github.com/Soban-2004/Agentic-RAG-Customer-Support-Platform-Flipkart-FAQ-/issues/1#issuecomment-5117425187">
-    <img src="https://placehold.co/900x500?text=%E2%96%B6%20Watch%20Demo" width="90%" alt="Watch Demo">
-  </a>
-</p>](https://github.com/user-attachments/assets/e0e801a2-3d6a-4d72-ab79-064b15b4d020)
+  <video src="https://github.com/user-attachments/assets/e0e801a2-3d6a-4d72-ab79-064b15b4d020" controls width="90%"></video>
+</p>
 
 ## Table of contents
 
