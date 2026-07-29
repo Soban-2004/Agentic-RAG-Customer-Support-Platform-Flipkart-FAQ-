@@ -28,4 +28,9 @@ EXPOSE 8000
 # Single worker only -- the shared FunctionAgent/Settings and the SQLite-backed
 # session memory (src/memory/persistent_memory.py) both assume one process.
 # See README's run-instructions notes.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+#
+# Shell form (not exec-form JSON array) so $PORT can be substituted -- defaults
+# to 8000 for `docker run -p 8000:8000 ...` unchanged; a host that assigns its
+# own port (e.g. Hugging Face Spaces, which requires listening on 7860) sets
+# PORT as a container env var/secret and this picks it up with no image rebuild.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

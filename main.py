@@ -77,7 +77,16 @@ async def lifespan(_app: FastAPI):
     # gemma4:cloud) -- separate from Settings.llm (used for RAG-answer
     # synthesis and intent classification, plain text generation unaffected
     # by this) -- see that config entry's comment for why.
-    agent_llm = build_gateway_llm(model_key="tool_call")
+    #
+    # AGENT_TOOL_CALL_MODEL_KEY overrides which config/models.yaml entry gets
+    # used for this, e.g. "fallback" -- for deployments where a locally
+    # ollama-signin'd daemon isn't available (no free host keeps one
+    # authenticated in the background). Unset locally, so local dev keeps
+    # using Ollama Cloud as before; a public deploy sets this to fall back to
+    # Groq instead and accepts the rare malformed-tool-call failure, which is
+    # already caught by chat_ws.py's try/except and degrades to one failed
+    # turn, not a crash.
+    agent_llm = build_gateway_llm(model_key=os.getenv("AGENT_TOOL_CALL_MODEL_KEY", "tool_call"))
     state.agent = await build_agent(index=index, llm=agent_llm)
 
     yield

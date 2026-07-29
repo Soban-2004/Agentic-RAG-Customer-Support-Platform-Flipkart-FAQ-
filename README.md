@@ -18,8 +18,24 @@ automated evaluation, and full request tracing all sit between the chat UI and t
   <img alt="Langfuse" src="https://img.shields.io/badge/Langfuse-observability-orange">
 </p>
 
+## Demo
+
+<!--
+  Add the demo video here. Easiest way on GitHub, no repo storage needed:
+    1. Open a new issue on this repo (or a PR comment box) -- don't submit it.
+    2. Drag and drop the video file into the comment textbox.
+    3. GitHub uploads it and inserts a URL like
+       https://github.com/<you>/<repo>/assets/<id>/xxxxxxxx-xxxx-xxxx.mp4
+    4. Copy that URL, replace this whole comment block with it on its own line
+       (GitHub auto-renders an inline video player for that URL pattern -- no
+       <video> tag needed), and delete the placeholder line below.
+-->
+
+*Demo video coming soon.*
+
 ## Table of contents
 
+- [Demo](#demo)
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
 - [Request lifecycle: one chat turn](#request-lifecycle-one-chat-turn)
@@ -165,7 +181,7 @@ flowchart LR
 | Persistence | PostgreSQL (users/threads/messages), SQLite (session memory, mock backend) |
 | Evaluation | [RAGAS](https://github.com/explodinggradients/ragas) + custom tool-routing and red-team suites |
 | Observability | Langfuse Cloud via OpenInference's LlamaIndex instrumentor |
-| Deployment | Docker (multi-stage: Node build → Python runtime), deployed on Render |
+| Deployment | Docker (multi-stage: Node build → Python runtime) — see [Deployment](#deployment) |
 
 ## Project layout
 
@@ -282,6 +298,9 @@ data/
 | `JWT_SECRET` | Yes | Signs the login session cookie |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Enables Langfuse tracing; every trace call is a no-op without them |
 | `OLLAMA_API_BASE` | Only in Docker | Overrides `config/models.yaml`'s `localhost:11434` (which means *the container itself* otherwise) |
+| `QDRANT_API_KEY` | Only for Qdrant Cloud | No API key needed for the default unsecured local/Docker Qdrant |
+| `AGENT_TOOL_CALL_MODEL_KEY` | No (defaults to `tool_call`/Ollama) | Overrides which `config/models.yaml` entry the agent's tool-call step uses — set to `fallback` on a host that can't keep an `ollama signin`'d daemon running in the background (see [Deployment](#deployment)) |
+| `PORT` | No (defaults to 8000) | Overrides the port the server listens on — some hosts assign their own and expect the container to read it |
 
 ## Evaluation
 
@@ -332,6 +351,16 @@ manually registering `gemma4:cloud` as function-calling-capable in LiteLLM's mod
 it can't do it — verified directly against Ollama's raw API). Verified live: 8/8 distinct FAQ
 questions forcing fresh tool calls succeeded with zero crashes, where the same test previously
 failed a meaningful fraction of the time.
+
+This does mean the Ollama daemon is a real, non-optional dependency for local dev. For a
+deployment target that can't keep one signed in and running in the background — true of most
+free-tier hosts, which don't support a persistent authenticated background process alongside
+the main server — `AGENT_TOOL_CALL_MODEL_KEY=fallback` (see [Configuration](#configuration))
+routes tool-calling to Groq's fallback model instead, accepting the rare malformed-tool-call
+failure this whole fix exists to avoid. That failure is already caught by `chat_ws.py`'s
+try/except and degrades to one failed turn with a generic error message, not a crash — an
+acceptable trade for a deployment that can't run Ollama at all, not a regression for local dev
+where Ollama stays the default.
 
 </details>
 
@@ -415,10 +444,21 @@ views. Entirely optional — every function is a no-op without Langfuse keys set
 Single multi-stage `Dockerfile`: a `node:20-slim` stage builds the React frontend, a
 `python:3.10-slim` stage runs the FastAPI app and serves the built static frontend directly —
 one container, one port, no separate frontend process or CORS/proxy setup needed in production.
-Deployed on [Render](https://render.com) from this image; Qdrant and Postgres run as their own
-managed/self-hosted services, pointed to via `QDRANT_URL` and `DATABASE_URL`.
+Qdrant and Postgres are external services either way, pointed to via `QDRANT_URL` and
+`DATABASE_URL` — Docker Compose for local Qdrant, or any managed/cloud provider for either.
 
 ```bash
 docker build -t flipkart-chatbot .
 docker run -p 8000:8000 --env-file .env flipkart-chatbot
 ```
+
+The listen port is read from `$PORT` (defaults to 8000) — hosts that assign their own port
+just need it passed as an env var, no image rebuild. On a host that can't keep an `ollama
+signin`'d daemon authenticated in the background (most free-tier hosts), set
+`AGENT_TOOL_CALL_MODEL_KEY=fallback` to route the agent's tool-call step to Groq instead of
+Ollama Cloud — see the "Why the agent's tool-calling model isn't Groq" deep dive above for why
+that step normally avoids Groq, and why falling back to it here is an accepted, gracefully-caught
+trade-off rather than a silent failure mode.
+
+There's no permanently-hosted public instance right now — see the [Demo](#demo) section above
+for a recorded walkthrough instead of a live link.

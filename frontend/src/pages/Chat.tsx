@@ -44,6 +44,12 @@ export function Chat() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+  // Set right before navigating to a just-created thread (see handleSend) --
+  // the server has zero messages for it yet (the first message is still
+  // queued as pendingFirst, waiting on the WS to connect), so the thread-load
+  // effect below must skip its fetch that one time or it clobbers the
+  // optimistic user bubble already in `messages` with an empty result.
+  const skipThreadLoadRef = useRef(false)
 
   const refreshThreads = useCallback(() => {
     api.listThreads().then(setThreads).catch(() => {})
@@ -58,6 +64,10 @@ export function Chat() {
     setShowScrollBtn(false)
     if (!threadId) {
       setMessages([])
+      return
+    }
+    if (skipThreadLoadRef.current) {
+      skipThreadLoadRef.current = false
       return
     }
     setLoadingThread(true)
@@ -134,6 +144,7 @@ export function Chat() {
     if (!threadId) {
       const thread = await api.createThread(content.slice(0, TITLE_MAX_LEN))
       setPendingFirst(content)
+      skipThreadLoadRef.current = true
       refreshThreads()
       navigate(`/chat/${thread.id}`, { replace: true })
       return
