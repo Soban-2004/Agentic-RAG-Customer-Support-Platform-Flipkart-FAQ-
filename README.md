@@ -55,7 +55,7 @@ automated evaluation, and full request tracing all sit between the chat UI and t
 | **UI** | Custom React 19 + TypeScript SPA, WebSocket token streaming, FastAPI backend serving both |
 | **Auth & chat history** | JWT cookie login + Postgres-backed thread list/resume (own schema, no vendor lock-in) |
 | **AI Gateway** | LiteLLM-based routing across 3 models/2 providers, automatic fallback, cost/latency logging |
-| **Guardrails** | 7 scanners (4 input + 3 output) via LLM Guard — jailbreak/prompt-injection blocking, PII redaction, parallelized |
+| **Guardrails** | Prompt-injection detection via Groq (Meta's Llama Prompt Guard 2), deterministic keyword prefilter — see [Engineering deep dives](#engineering-deep-dives) for why this replaced a 7-scanner local LLM Guard setup |
 | **Semantic cache** | Qdrant-backed, skips the LLM entirely on repeated/paraphrased FAQ questions |
 | **Agent** | LlamaIndex `FunctionAgent` — tool-calling agent (`search_faq` + 4 MCP tools) |
 | **Planning** | Intent classifier (FAQ / order status / refund / escalate / general chat) gates cache eligibility |
@@ -75,7 +75,7 @@ flowchart TD
     UI -- "WebSocket: /ws/chat/:id" --> API
     API -- auth / threads / messages --> PG[("PostgreSQL\nusers · threads · messages")]
 
-    API --> InGuard["Guardrails — input scan\nPromptInjection · Toxicity · BanTopics · TokenLimit"]
+    API --> InGuard["Guardrails — input scan\nKeyword prefilter + Prompt Guard (Groq)"]
     InGuard -- blocked --> Refusal(["Canned refusal"])
     InGuard -- clean --> Planner["Planner\nintent classification"]
 
@@ -88,13 +88,13 @@ flowchart TD
     SearchFAQ --> Qdrant[("Qdrant\nFAQ vectors + response cache")]
     MCP --> Backend[("SQLite\nmock orders / refunds / notes")]
 
+    SearchFAQ --> Cohere(["Cohere\nembed + rerank APIs"])
     SearchFAQ --> Gateway["AI Gateway\nLiteLLM routing + fallback"]
     Agent --> Gateway
-    Gateway --> Groq(["Groq\nLlama 3.3-70B / 3.1-8B"])
-    Gateway --> Ollama(["Ollama Cloud\ngemma4:cloud — tool calls only"])
+    Gateway --> Groq(["Groq\nLlama 3.3-70B / 3.1-8B / Prompt Guard 2"])
+    Gateway --> Ollama(["Ollama Cloud\ngemma4:cloud — tool calls, local dev only"])
 
-    Gateway --> OutGuard["Guardrails — output scan\nPII redaction · refusal / URL checks"]
-    OutGuard --> FinalReply(["Final response"])
+    Gateway --> FinalReply(["Final response"])
 
     API -.session memory.-> ChatMem[("SQLite\nchat_memory.db")]
     API -.traces.-> Langfuse[("Langfuse Cloud")]
@@ -103,10 +103,9 @@ flowchart TD
 
 ## Request lifecycle: one chat turn
 
-Every message runs the same five-stage pipeline, whether it resolves from cache, from the
-knowledge base, or from an MCP tool call. Status frames over the WebSocket keep the UI honest
-about *which* stage is running — guardrail scanning alone is typically 1.5–4.5s of otherwise
-silent latency.
+Every message runs the same pipeline, whether it resolves from cache, from the knowledge base,
+or from an MCP tool call. Status frames over the WebSocket keep the UI honest about *which*
+stage is running while it happens.
 
 ```mermaid
 sequenceDiagram
@@ -121,6 +120,7 @@ sequenceDiagram
 
     U->>WS: {"content": "..."}
     WS->>G: scan_user_input()
+    Note over G: keyword prefilter, then<br/>Groq Prompt Guard 2 call
     alt blocked
         G-->>U: canned refusal (no LLM call)
     else clean
@@ -137,8 +137,6 @@ sequenceDiagram
             A->>L: synthesis / tool-call decision
             L-->>A: completion
             A-->>WS: streamed / final response
-            WS->>G: scan_bot_output()
-            G-->>WS: PII-redacted response
             WS->>U: {"type":"done", "content": "..."}
             WS->>C: set(query, response) if cacheable & clean
         end
@@ -154,7 +152,7 @@ flowchart LR
     CSV["faq_data.csv\n~2,000 rows"] --> Chunk["Chunk + tag\nsource_type: faq"]
     PDF1["Flipkart-1.pdf"] --> Chunk
     PDF2["Flipkart-2.pdf"] --> Chunk2["Chunk + tag\nsource_type: policy_doc"]
-    Chunk --> Embed["Dense embed\nbge-small-en-v1.5"]
+    Chunk --> Embed["Dense embed\nCohere embed-v3 (or local bge-small)"]
     Chunk2 --> Embed
     Chunk --> Sparse["Sparse embed\nQdrant/bm25"]
     Chunk2 --> Sparse
@@ -171,9 +169,9 @@ flowchart LR
 | LLM gateway | LiteLLM — provider-agnostic routing, fallback, retries, cost/latency logging |
 | LLMs | Groq `llama-3.3-70b-versatile` (primary) → `llama-3.1-8b-instant` (fallback); Ollama Cloud `gemma4:cloud` (agent tool-call decisions only) |
 | Vector DB | Qdrant (self-hosted via Docker) — hybrid dense + sparse, one collection for FAQs, one for the semantic cache |
-| Embeddings | `BAAI/bge-small-en-v1.5` (dense, FastEmbed) + `Qdrant/bm25` (sparse) |
-| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
-| Guardrails | [LLM Guard](https://github.com/protectai/llm-guard) — PromptInjection, Toxicity, BanTopics, TokenLimit, Sensitive (Presidio PII), NoRefusal, MaliciousURLs |
+| Embeddings | Cohere `embed-english-v3.0` (API) in production, `BAAI/bge-small-en-v1.5` (local FastEmbed) in dev — same toggle as the reranker, see `src/common/embed_factory.py` — + `Qdrant/bm25` (sparse, always local, stateless) |
+| Reranker | Cohere `rerank-english-v3.0` (API) in production, local `cross-encoder/ms-marco-MiniLM-L-6-v2` in dev |
+| Guardrails | Deterministic keyword prefilter + Groq's `llama-prompt-guard-2-86m` (Meta's dedicated prompt-injection/jailbreak model) — see [Engineering deep dives](#engineering-deep-dives) |
 | Tool protocol | [Model Context Protocol](https://modelcontextprotocol.io) — real stdio MCP server, not in-process function calls |
 | Backend | FastAPI, WebSocket streaming, asyncpg (no ORM) |
 | Frontend | React 19 + TypeScript, Vite, Tailwind CSS v4 (CSS-first theming), Framer Motion |
@@ -255,6 +253,7 @@ data/
    DATABASE_URL=postgresql+asyncpg://postgres:PASSWORD@localhost:5432/flipkart_chatbot
    JWT_SECRET=...                      # e.g. python -c "import secrets; print(secrets.token_urlsafe(32))"
    # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY=...   # optional, see Observability
+   # COHERE_API_KEY=...                              # optional, see Configuration + Engineering deep dives
    ```
 
 7. **Create a login user** (no self-serve signup):
@@ -301,6 +300,7 @@ data/
 | `QDRANT_API_KEY` | Only for Qdrant Cloud | No API key needed for the default unsecured local/Docker Qdrant |
 | `AGENT_TOOL_CALL_MODEL_KEY` | No (defaults to `tool_call`/Ollama) | Overrides which `config/models.yaml` entry the agent's tool-call step uses — set to `fallback` on a host that can't keep an `ollama signin`'d daemon running in the background (see [Deployment](#deployment)) |
 | `PORT` | No (defaults to 8000) | Overrides the port the server listens on — some hosts assign their own and expect the container to read it |
+| `COHERE_API_KEY` | No (defaults to local models) | Switches the embedder and reranker to Cohere's hosted APIs instead of loading them locally — see [Engineering deep dives](#engineering-deep-dives) for why |
 
 ## Evaluation
 
@@ -365,16 +365,34 @@ where Ollama stays the default.
 </details>
 
 <details>
-<summary><strong>Why guardrails run in parallel, not sequentially</strong></summary>
+<summary><strong>Why guardrails, the reranker, and the embedder all moved from local models to APIs</strong></summary>
 
-Four transformer-backed input scanners running one after another on CPU (~1.5–4.5s observed)
-were the single biggest latency contributor in the request path. All four
-(`PromptInjection`/`Toxicity`/`BanTopics`/`TokenLimit`) are pure detectors with no
-cross-scanner data dependency — verified by reading each scanner's `.scan()` source, not
-assumed — so they run concurrently via `asyncio.gather`, cutting wall-clock from the sum of
-all four to roughly the slowest single one. Output scanning is only partially parallelized:
-`Sensitive` (PII redaction) must run first since its redacted text is what the remaining
-scanners should see.
+This app originally ran 7 local LLM Guard scanners (~1.3GB of transformer models once loaded)
+plus a local cross-encoder reranker plus a local embedder — fine on a dev machine, but nowhere
+close to fitting a free-tier host's ~512MB RAM ceiling. Trimming scanners one at a time barely
+moved the number, and tracing why turned up something not obvious from the outside: importing
+*anything* from the `llm_guard` package — even its lightest, model-free `TokenLimit` scanner —
+pulled in ~450MB unconditionally, because `torch`/`transformers` are imported by the library's
+base classes, not per-scanner. There was no "keep the cheap ones" option; the cost was in using
+the library at all, confirmed by direct process-memory measurement (`Get-Process`'s
+`WorkingSet64`), not assumed from documentation.
+
+The fix wasn't a smaller local model, it was removing local inference from the hot path
+entirely: prompt-injection detection now calls Groq's `llama-prompt-guard-2-86m` (Meta's
+dedicated jailbreak/injection classifier — arguably a better fit than LLM Guard's
+general-purpose scanner, not just a smaller one), and the embedder/reranker call Cohere's
+hosted APIs instead of loading `bge-small`/a cross-encoder in-process. Net effect, measured
+end-to-end with the same methodology: **1,309MB → 315MB**. Output scanning (PII redaction,
+refusal/URL checks) was dropped rather than replaced — this bot's responses come only from a
+controlled FAQ knowledge base and fixed MCP tool outputs, not user-generated content being
+echoed back, so the exposure a general-purpose assistant would have doesn't really apply here.
+
+All three swaps are env-var-gated, not hardcoded: `COHERE_API_KEY` unset falls back to the
+local embedder/reranker (`src/common/embed_factory.py`, `src/agent/chat_agent.py`) with zero
+behavior change for local dev, which never had a memory constraint to begin with. Switching
+embedders isn't a drop-in config change though — Cohere's `embed-english-v3.0` is 1024-dim vs.
+`bge-small`'s 384-dim, so toggling it requires a full re-ingest (`embed_qdrant.py --reset`),
+not an incremental upsert, since a collection can't mix vector dimensions.
 
 </details>
 
@@ -453,12 +471,18 @@ docker run -p 8000:8000 --env-file .env flipkart-chatbot
 ```
 
 The listen port is read from `$PORT` (defaults to 8000) — hosts that assign their own port
-just need it passed as an env var, no image rebuild. On a host that can't keep an `ollama
-signin`'d daemon authenticated in the background (most free-tier hosts), set
-`AGENT_TOOL_CALL_MODEL_KEY=fallback` to route the agent's tool-call step to Groq instead of
-Ollama Cloud — see the "Why the agent's tool-calling model isn't Groq" deep dive above for why
-that step normally avoids Groq, and why falling back to it here is an accepted, gracefully-caught
-trade-off rather than a silent failure mode.
+just need it passed as an env var, no image rebuild. Two env vars matter for a free-tier
+deployment specifically, both optional and both no-op for local dev:
+
+- `AGENT_TOOL_CALL_MODEL_KEY=fallback` — routes the agent's tool-call step to Groq instead of
+  Ollama Cloud, for a host that can't keep an `ollama signin`'d daemon authenticated in the
+  background (true of most free-tier hosts). See the "Why the agent's tool-calling model isn't
+  Groq" deep dive above for why that step normally avoids Groq, and why falling back to it here
+  is an accepted, gracefully-caught trade-off rather than a silent failure mode.
+- `COHERE_API_KEY` — moves the embedder and reranker to Cohere's hosted APIs instead of loading
+  them locally, and combined with dropping local guardrail models (see the deep dive above)
+  brings the process's real memory footprint from ~1.3GB down to ~315MB — the difference between
+  fitting a free tier's ~512MB RAM ceiling and not.
 
 There's no permanently-hosted public instance right now — see the [Demo](#demo) section above
 for a recorded walkthrough instead of a live link.

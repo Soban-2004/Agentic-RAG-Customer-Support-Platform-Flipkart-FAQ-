@@ -1,48 +1,58 @@
 """
 Guardrails sublayer of the AI Gateway.
 
-Input scanners run on the raw user message *before* it reaches the agent or
+Input scanning runs on the raw user message *before* it reaches the agent or
 any LLM call -- a blocked input short-circuits immediately, so an attempted
 jailbreak/prompt injection never gets as far as a model or a tool.
 
-Output scanners run on the full generated response *before* it is shown to
-the user -- PII is redacted (never just flagged) since a chatbot leaking a
-phone number is worse than a chatbot refusing to answer.
+Output scanning runs on the full generated response *before* it is shown to
+the user. Currently a no-op: this bot's responses come only from a
+controlled FAQ knowledge base and fixed MCP tool outputs, not user-generated
+content being echoed back, so the PII/malicious-content exposure a
+general-purpose assistant would have is meaningfully lower here.
 
-Uses LLM Guard (self-hosted, no external API), running its transformer-backed
-scanners (PromptInjection, Toxicity, BanTopics, NoRefusal, MaliciousURLs) on
-the default torch backend. An ONNX backend is also available in LLM Guard via
-`use_onnx=True`, but it additionally requires the `optimum[onnxruntime]`
-package on top of raw onnxruntime -- not worth the extra dependency here
-since torch is already pulled in transitively.
+Previously self-hosted via LLM Guard (multiple local transformer models).
+Dropped entirely -- not "trimmed," the whole dependency -- after measuring
+that importing anything from `llm_guard` costs ~450MB of RAM unconditionally
+(torch + transformers pulled in by its base classes, regardless of which
+scanner you actually use; verified by direct process-memory measurement, not
+assumed), which doesn't fit a free-tier deployment's RAM ceiling. Prompt
+injection detection now runs on Groq instead (see _check_prompt_injection),
+via Meta's dedicated Llama Prompt Guard 2 model (config/models.yaml's
+`prompt_guard` entry) -- zero local RAM, same API key already used
+everywhere else, and arguably a better fit than LLM Guard's PromptInjection
+scanner since it's purpose-built for this one task rather than a
+general-purpose classifier repurposed for it.
 """
 
-import asyncio
 import logging
+import os
 import re
 from typing import Optional
 
-import anyio
-from llm_guard.input_scanners import BanTopics, PromptInjection, TokenLimit, Toxicity
-from llm_guard.output_scanners import MaliciousURLs, NoRefusal, Sensitive
+import litellm
+import yaml
 
 logger = logging.getLogger("gateway.guardrails")
 
-# Scope the bot to Flipkart customer support; anything routed here is refused.
-BANNED_TOPICS = ["politics", "religion", "violence", "self-harm", "illegal activity"]
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "models.yaml")
 
-# Fast deterministic pre-check, layered ahead of the ML scanners below. Found
-# via the red-team eval suite (src/eval/data/redteam.json): BanTopics is a
-# soft zero-shot classifier, and its score for "how do I make an explosive
-# device at home" (~0.4-0.5 on 'illegal activity') landed in the same range as
-# ordinary customer-support text's baseline score for that label (~0.3-0.4) --
-# run-to-run noisy enough that lowering the threshold to catch one risks
-# false-blocking real customers on the other. A short, unambiguous keyword
-# list sidesteps that: customers asking about orders/refunds/payments don't
-# say "bomb" or "explosive", so this adds a hard catch for the clearest cases
-# without touching BanTopics' threshold at all.
+# Fast deterministic pre-check, layered ahead of the ML check below. Found via
+# the red-team eval suite (src/eval/data/redteam.json): a soft zero-shot
+# classifier's score for "how do I make an explosive device at home" landed
+# in the same noisy range as ordinary customer-support text -- a short,
+# unambiguous keyword list sidesteps that entirely for the clearest cases.
 _DANGEROUS_KEYWORDS = ["explosive", "bomb", "detonat", "molotov"]
 _DANGEROUS_PATTERN = re.compile(r"\b(" + "|".join(_DANGEROUS_KEYWORDS) + r")\w*\b", re.IGNORECASE)
+
+# Character-count proxy for LLM Guard's old token-based TokenLimit -- avoids
+# pulling in a tokenizer just for a length guard. ~4 chars/token is the same
+# rough heuristic used elsewhere in this project for token estimates; 4000
+# tokens * 4 is a deliberately loose upper bound, not a precise cutoff.
+_MAX_INPUT_CHARS = 16000
+
+_PROMPT_INJECTION_THRESHOLD = 0.9
+_PROMPT_GUARD_MODEL = "prompt_guard"
 
 
 def _keyword_prefilter(text: str) -> Optional[str]:
@@ -50,92 +60,33 @@ def _keyword_prefilter(text: str) -> Optional[str]:
     return match.group(0) if match else None
 
 
-_input_scanners = None
-_output_scanners = None
+def _load_prompt_guard_entry() -> dict:
+    with open(_CONFIG_PATH, "r") as f:
+        config = yaml.safe_load(f)
+    return config["models"][_PROMPT_GUARD_MODEL]
 
 
-def _get_input_scanners() -> list:
-    global _input_scanners
-    if _input_scanners is None:
-        logger.info("guardrails: loading input scanners (first call, downloads models if needed)")
-        _input_scanners = [
-            PromptInjection(),  # covers both prompt injection and jailbreak attempts
-            Toxicity(),
-            BanTopics(BANNED_TOPICS),
-            TokenLimit(limit=4000),
-        ]
-    return _input_scanners
-
-
-def _get_output_scanners() -> list:
-    global _output_scanners
-    if _output_scanners is None:
-        logger.info("guardrails: loading output scanners (first call, downloads models if needed)")
-        _output_scanners = [
-            Sensitive(redact=True),  # PII detection + redaction via Presidio under the hood
-            NoRefusal(),
-            MaliciousURLs(),
-        ]
-    return _output_scanners
-
-
-async def _scan_prompt_parallel(scanners: list, prompt: str) -> tuple[str, dict, dict]:
-    """Runs the 4 input scanners concurrently instead of llm_guard's own
-    sequential `scan_prompt()` -- by far the single biggest latency
-    contributor in the request path (~1.5-4.5s observed, 4 transformer
-    models run one after another on CPU). Safe because all 4
-    (PromptInjection/Toxicity/BanTopics/TokenLimit) are pure detectors with
-    no cross-scanner data dependency: none of them mutate the prompt except
-    TokenLimit, and only when it's already invalidating (at which point
-    GuardrailBlocked fires regardless of scan order) -- verified by reading
-    each scanner's actual `.scan()` source, not assumed. Cuts wall-clock from
-    the sum of all 4 scanners to roughly the slowest single one.
-    """
-    if not scanners or not prompt.strip():
-        return prompt, {}, {}
-    results = await asyncio.gather(
-        *(anyio.to_thread.run_sync(scanner.scan, prompt) for scanner in scanners)
-    )
-    sanitized_prompt = prompt
-    results_valid, results_score = {}, {}
-    for scanner, (out_prompt, is_valid, risk_score) in zip(scanners, results):
-        name = type(scanner).__name__
-        results_valid[name] = is_valid
-        results_score[name] = risk_score
-        if not is_valid:
-            sanitized_prompt = out_prompt
-    return sanitized_prompt, results_valid, results_score
-
-
-async def _scan_output_parallel(scanners: list, prompt: str, text: str) -> tuple[str, dict, dict]:
-    """`Sensitive` (PII redaction) must run first and its redacted text is
-    what `NoRefusal`/`MaliciousURLs` should see -- unlike the input scanners,
-    these aren't fully independent, so only the last two (already fast, no
-    cross-dependency between *them*) run concurrently with each other."""
-    if not scanners or not text.strip():
-        return text, {}, {}
-    sensitive, rest = scanners[0], scanners[1:]
-
-    sanitized_text, is_valid, risk_score = await anyio.to_thread.run_sync(
-        sensitive.scan, prompt, text
-    )
-    results_valid = {type(sensitive).__name__: is_valid}
-    results_score = {type(sensitive).__name__: risk_score}
-
-    if rest:
-        rest_results = await asyncio.gather(
-            *(anyio.to_thread.run_sync(s.scan, prompt, sanitized_text) for s in rest)
+async def _check_prompt_injection(text: str) -> float:
+    """Calls Groq's Llama Prompt Guard 2 model, returns a 0-1 risk score.
+    Fails open (returns 0.0, logs a warning) on any API error -- a transient
+    Groq hiccup shouldn't block a legitimate customer message, matching the
+    same fail-open philosophy src/agent/planner.py uses for its own
+    classification step."""
+    entry = _load_prompt_guard_entry()
+    try:
+        response = await litellm.acompletion(
+            model=entry["model"],
+            messages=[{"role": "user", "content": text}],
+            api_key=os.getenv(entry["api_key_env"]),
         )
-        for scanner, (_, is_valid, risk_score) in zip(rest, rest_results):
-            name = type(scanner).__name__
-            results_valid[name] = is_valid
-            results_score[name] = risk_score
-
-    return sanitized_text, results_valid, results_score
+        return float(response.choices[0].message.content)
+    except Exception:
+        logger.exception("guardrails: prompt-injection check failed, failing open")
+        return 0.0
 
 
 class GuardrailBlocked(Exception):
-    """Raised when an input scanner rejects the user's message."""
+    """Raised when the input is rejected."""
 
     def __init__(self, scanner: str, risk_score: float):
         self.scanner = scanner
@@ -145,9 +96,9 @@ class GuardrailBlocked(Exception):
 
 async def scan_user_input(text: str) -> str:
     """
-    Scan the raw user message. Returns the sanitized text if all scanners pass.
-    Raises GuardrailBlocked on the first failing scanner -- callers must catch
-    this and short-circuit before any LLM/tool call is made.
+    Scan the raw user message. Returns the text unchanged if it passes.
+    Raises GuardrailBlocked if it doesn't -- callers must catch this and
+    short-circuit before any LLM/tool call is made.
     """
     keyword_hit = _keyword_prefilter(text)
     if keyword_hit:
@@ -157,41 +108,26 @@ async def scan_user_input(text: str) -> str:
         )
         raise GuardrailBlocked("KeywordDenylist", 1.0)
 
-    # LLM Guard's scanners are synchronous (torch backend) -- off the event
-    # loop so one user's scan can't stall every other concurrently-connected
-    # user's streamed chat response. Run concurrently, not sequentially --
-    # see _scan_prompt_parallel.
-    sanitized, results_valid, results_score = await _scan_prompt_parallel(
-        _get_input_scanners(), text
-    )
-    for scanner_name, is_valid in results_valid.items():
-        if not is_valid:
-            score = results_score.get(scanner_name, 0.0)
-            logger.warning(
-                "guardrail_triggered layer=input scanner=%s score=%.2f text=%r",
-                scanner_name, score, text[:120],
-            )
-            raise GuardrailBlocked(scanner_name, score)
-    return sanitized
+    if len(text) > _MAX_INPUT_CHARS:
+        logger.warning("guardrail_triggered layer=input scanner=TokenLimit len=%d", len(text))
+        raise GuardrailBlocked("TokenLimit", 1.0)
+
+    score = await _check_prompt_injection(text)
+    if score > _PROMPT_INJECTION_THRESHOLD:
+        logger.warning(
+            "guardrail_triggered layer=input scanner=PromptInjection score=%.4f text=%r",
+            score, text[:120],
+        )
+        raise GuardrailBlocked("PromptInjection", score)
+
+    return text
 
 
 async def scan_bot_output(prompt: str, text: str) -> tuple[str, Optional[str]]:
     """
     Scan the full generated response before it reaches the user.
-    Returns (sanitized_text, triggered_scanner_name_or_None). PII is redacted
-    in-place rather than the response being discarded; a NoRefusal/MaliciousURLs
-    trigger is logged but the (still-flagged) text is returned as-is since there
-    is nothing safe to substitute mid-conversation.
+    Returns (sanitized_text, triggered_scanner_name_or_None). Currently
+    always passes through unchanged -- see module docstring for why there's
+    no output scanning right now.
     """
-    sanitized, results_valid, results_score = await _scan_output_parallel(
-        _get_output_scanners(), prompt, text
-    )
-    triggered = None
-    for scanner_name, is_valid in results_valid.items():
-        if not is_valid:
-            triggered = scanner_name
-            logger.warning(
-                "guardrail_triggered layer=output scanner=%s score=%.2f",
-                scanner_name, results_score.get(scanner_name, 0.0),
-            )
-    return sanitized, triggered
+    return text, None

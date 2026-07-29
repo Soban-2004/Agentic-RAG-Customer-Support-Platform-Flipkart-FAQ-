@@ -11,6 +11,7 @@ talks to them over the actual MCP client/server protocol, the same way it
 would talk to a real external tool server.
 """
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,10 @@ from llama_index.core import PromptTemplate, VectorStoreIndex
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.base.base_query_engine import BaseQueryEngine
 from llama_index.core.llms import LLM
-from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.tools import FunctionTool, QueryEngineTool
 from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
+
+from src.common.embed_factory import use_cohere_embeddings
 
 MCP_SERVER_PATH = Path(__file__).resolve().parent.parent / "tools" / "mcp_server.py"
 
@@ -33,6 +35,15 @@ MCP_SERVER_PATH = Path(__file__).resolve().parent.parent / "tools" / "mcp_server
 HYBRID_CANDIDATES = 10
 RERANK_TOP_N = 3
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Cohere's hosted rerank API instead of a locally-loaded cross-encoder --
+# ~355MB of RAM the deployed process doesn't have to carry, at the cost of a
+# network round-trip per query and Cohere's trial-key limits (1,000 calls/
+# month, 10 rerank req/min -- see .env). COHERE_API_KEY unset (local dev)
+# falls back to the local cross-encoder, so nothing changes there. Same flag
+# src/common/embed_factory.py uses for the embedder -- both toggle off the
+# same key, since there's currently no scenario wanting one without the other.
+_USE_COHERE_RERANK = use_cohere_embeddings()
 
 
 # Default query-engine QA prompt has no formatting guidance at all, which is
@@ -54,14 +65,24 @@ FAQ_QA_TEMPLATE = PromptTemplate(
 )
 
 
+def _build_reranker():
+    if _USE_COHERE_RERANK:
+        from llama_index.postprocessor.cohere_rerank import CohereRerank
+
+        return CohereRerank(
+            api_key=os.getenv("COHERE_API_KEY"), model="rerank-english-v3.0", top_n=RERANK_TOP_N
+        )
+    from llama_index.core.postprocessor import SentenceTransformerRerank
+
+    return SentenceTransformerRerank(model=RERANKER_MODEL, top_n=RERANK_TOP_N)
+
+
 def build_faq_query_engine(index: VectorStoreIndex) -> BaseQueryEngine:
     return index.as_query_engine(
         vector_store_query_mode="hybrid",
         similarity_top_k=HYBRID_CANDIDATES,
         sparse_top_k=HYBRID_CANDIDATES,
-        node_postprocessors=[
-            SentenceTransformerRerank(model=RERANKER_MODEL, top_n=RERANK_TOP_N)
-        ],
+        node_postprocessors=[_build_reranker()],
         text_qa_template=FAQ_QA_TEMPLATE,
     )
 

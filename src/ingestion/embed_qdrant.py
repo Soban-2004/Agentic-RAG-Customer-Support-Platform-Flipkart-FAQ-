@@ -35,9 +35,9 @@ from llama_index.core import (
     Settings,
 )
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
+from src.common.embed_factory import build_embed_model
 from src.common.qdrant_factory import get_sync_qdrant_client, is_remote
 
 # Setup logging to see progress
@@ -75,9 +75,11 @@ def main() -> None:
     args = parser.parse_args()
 
     print("Configuring settings...")
-    # Embedding model -- must match app.py's query-time embed model exactly, or
-    # retrieval silently degrades (ingestion used to use a different model here).
-    Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    # Embedding model -- must match main.py's query-time embed model exactly,
+    # or retrieval silently degrades (ingestion used to use a different model
+    # here). build_embed_model() is shared with main.py for exactly this
+    # reason -- see src/common/embed_factory.py.
+    Settings.embed_model = build_embed_model()
     Settings.text_splitter = SentenceSplitter(chunk_size=500, chunk_overlap=50)
 
     # NOTE: local/embedded mode only allows ONE open client per storage folder --

@@ -27,7 +27,6 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from llama_index.core import Settings, VectorStoreIndex  # noqa: E402
-from llama_index.embeddings.fastembed import FastEmbedEmbedding  # noqa: E402
 from llama_index.vector_stores.qdrant import QdrantVectorStore  # noqa: E402
 
 from src.agent.chat_agent import build_agent  # noqa: E402
@@ -36,13 +35,13 @@ from src.api.auth import router as auth_router  # noqa: E402
 from src.api.chat_ws import router as chat_ws_router  # noqa: E402
 from src.api.config import DATABASE_URL  # noqa: E402,F401 -- import validates it's set
 from src.api.threads import router as threads_router  # noqa: E402
+from src.common.embed_factory import build_embed_model, embed_dim  # noqa: E402
 from src.common.qdrant_factory import get_async_qdrant_client, is_remote  # noqa: E402
 from src.gateway.cache import SemanticCache  # noqa: E402
 from src.gateway.llm_gateway import build_gateway_llm  # noqa: E402
 from src.observability.tracing import init_tracing  # noqa: E402
 
 COLLECTION_NAME = "flipkart_faqs"
-EMBED_DIM = 384  # BAAI/bge-small-en-v1.5
 
 if not os.getenv("CHATGROQ_API_KEY"):
     raise ValueError("Missing CHATGROQ_API_KEY -- see README.md.")
@@ -54,7 +53,7 @@ FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    embed_model = build_embed_model()
     Settings.embed_model = embed_model
     Settings.llm = build_gateway_llm()
     init_tracing()
@@ -71,7 +70,7 @@ async def lifespan(_app: FastAPI):
     )
     index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
-    state.cache = SemanticCache(client=aclient, embed_model=embed_model, vector_size=EMBED_DIM)
+    state.cache = SemanticCache(client=aclient, embed_model=embed_model, vector_size=embed_dim())
     # The agent's own tool-call decision step gets a dedicated model
     # (config/models.yaml's "tool_call" entry, currently Ollama Cloud's
     # gemma4:cloud) -- separate from Settings.llm (used for RAG-answer

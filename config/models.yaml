@@ -52,3 +52,17 @@ models:
     api_base: http://localhost:11434
     temperature: 0.2
     max_tokens: 1024
+
+  # Prompt-injection/jailbreak classifier for src/gateway/guardrails.py --
+  # NOT routed through build_gateway_llm() like the other three (no fallback
+  # apparatus needed for a single classification call, and it isn't
+  # Settings.llm or the agent's llm). Meta's dedicated prompt-attack detector,
+  # not a general-purpose model repurposed for it -- replaces LLM Guard's
+  # local PromptInjection scanner, which cost ~450MB of RAM just from
+  # importing the llm_guard library at all (torch + transformers pulled in
+  # unconditionally by its base classes, verified by direct measurement).
+  # This runs on Groq's infrastructure instead: zero local RAM, same API key
+  # already used for everything else.
+  prompt_guard:
+    model: groq/meta-llama/llama-prompt-guard-2-86m
+    api_key_env: CHATGROQ_API_KEY
