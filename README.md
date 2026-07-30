@@ -20,6 +20,12 @@ automated evaluation, and full request tracing all sit between the chat UI and t
 
 ## 🎥 Demo
 
+**Live:** [agentic-rag-customer-support-platform.onrender.com](https://agentic-rag-customer-support-platform.onrender.com)
+— sign up for a free account, or try the demo login: `demo` / `FlipkartDemo2026!`
+
+> Deployed on Render's free tier, which sleeps after 15 minutes of inactivity — if it's been
+> idle, the first load can take 30-60s to wake up. Not broken, just cold-starting.
+
 <p align="center">
   <video src="https://github.com/user-attachments/assets/e0e801a2-3d6a-4d72-ab79-064b15b4d020" controls width="90%"></video>
 </p>
