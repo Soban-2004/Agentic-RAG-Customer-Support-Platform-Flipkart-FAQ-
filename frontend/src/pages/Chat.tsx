@@ -97,7 +97,10 @@ export function Chat() {
     [refreshThreads, regeneratingId],
   )
 
-  const { connected, streaming, pending, statusLabel, send } = useChatSocket(threadId ?? null, handleDone)
+  const { connected, streaming, pending, statusLabel, send } = useChatSocket(
+    threadId ? `/ws/chat/${threadId}` : null,
+    handleDone,
+  )
 
   function scrollToBottom(smooth: boolean) {
     const el = scrollRef.current

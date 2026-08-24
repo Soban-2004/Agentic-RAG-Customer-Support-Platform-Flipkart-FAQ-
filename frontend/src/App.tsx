@@ -3,6 +3,7 @@ import { useAuth } from "./hooks/useAuth"
 import { Login } from "./pages/Login"
 import { Signup } from "./pages/Signup"
 import { Chat } from "./pages/Chat"
+import { Demo } from "./pages/Demo"
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -16,6 +17,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      {/* Unauthenticated on purpose -- see Demo.tsx / src/api/demo_ws.py */}
+      <Route path="/demo" element={<Demo />} />
       <Route
         path="/"
         element={

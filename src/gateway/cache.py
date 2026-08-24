@@ -31,15 +31,19 @@ CACHE_COLLECTION = "response_cache"
 SIMILARITY_THRESHOLD = 0.95
 TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
 
-# Bump this whenever a prompt/template change would make old cached answers
-# wrong or stale (e.g. the FAQ_QA_TEMPLATE/SYSTEM_PROMPT markdown-formatting
-# change) -- a real incident, not hypothetical: a "modes of payment" answer
-# cached before that change kept being served verbatim, unformatted, to every
-# later session asking a semantically similar question, since nothing tied
-# cache entries to the prompt that produced them. Stored in each entry's
-# payload and checked on read, the same way the TTL is -- a version bump
-# invalidates every existing entry without needing a manual collection wipe.
-CACHE_VERSION = 2
+# Bump this whenever a prompt/template change -- or a cache-*scoping* change
+# like the one below -- would make old cached answers wrong or stale. Stored
+# in each entry's payload and checked on read, the same way the TTL is -- a
+# version bump invalidates every existing entry without needing a manual
+# collection wipe. Two real incidents so far, not hypothetical:
+#   v1->v2: a "modes of payment" answer cached before a prompt-formatting
+#     change kept being served verbatim, unformatted, to later sessions.
+#   v2->v3: CACHEABLE_INTENTS (src/agent/planner.py) used to include
+#     general_chat, which let a session-referential answer ("you haven't
+#     asked anything yet in this conversation") get cached globally and
+#     served to a different session that actually had asked something --
+#     narrowing that set doesn't retroactively un-cache what v2 already wrote.
+CACHE_VERSION = 3
 
 
 class SemanticCache:

@@ -76,6 +76,19 @@ export function Login() {
             Sign up
           </Link>
         </p>
+
+        <div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wide text-muted">
+          <div className="h-px flex-1 bg-border" />
+          or
+          <div className="h-px flex-1 bg-border" />
+        </div>
+
+        <Link
+          to="/demo"
+          className="block w-full rounded-lg border border-border py-2 text-center text-sm font-medium text-ink transition-colors hover:border-brand/40 hover:text-brand"
+        >
+          Try the demo -- no signup needed
+        </Link>
       </form>
     </div>
   )

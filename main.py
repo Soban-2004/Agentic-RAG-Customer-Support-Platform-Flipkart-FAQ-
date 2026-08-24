@@ -34,6 +34,7 @@ from src.api import state  # noqa: E402
 from src.api.auth import router as auth_router  # noqa: E402
 from src.api.chat_ws import router as chat_ws_router  # noqa: E402
 from src.api.config import DATABASE_URL  # noqa: E402,F401 -- import validates it's set
+from src.api.demo_ws import router as demo_ws_router  # noqa: E402
 from src.api.threads import router as threads_router  # noqa: E402
 from src.common.embed_factory import build_embed_model, embed_dim, use_cohere_embeddings  # noqa: E402
 from src.common.qdrant_factory import get_async_qdrant_client, is_remote  # noqa: E402
@@ -103,6 +104,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(threads_router)
 app.include_router(chat_ws_router)
+app.include_router(demo_ws_router)
 
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")

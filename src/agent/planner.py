@@ -5,8 +5,8 @@ acts on a message.
 This does NOT control which tool the agent calls -- the agent decides that
 itself via tool-calling (see src/agent/chat_agent.py). The classification is
 used for orchestration decisions that need to happen outside the agent loop:
-  - Semantic cache eligibility (only faq_lookup/general_chat may be cached --
-    order/refund/escalation answers are per-user and dynamic, see src/gateway/cache.py)
+  - Semantic cache eligibility (only faq_lookup may be cached -- see
+    CACHEABLE_INTENTS below for why general_chat was dropped from this set)
   - Observability tagging (which kind of question is this, for logging/traces)
 """
 
@@ -29,7 +29,21 @@ class IntentLabel(str, Enum):
 
 
 # Only these intents may ever be served from / written to the semantic cache.
-CACHEABLE_INTENTS = {IntentLabel.FAQ_LOOKUP, IntentLabel.GENERAL_CHAT}
+#
+# general_chat used to be included here too, on the assumption that smalltalk
+# is stable/generic enough to share globally. That's true for "hi"/"thanks",
+# but general_chat also catches session-referential meta-questions ("what
+# was my previous question", "what did I just ask you") -- confirmed live
+# (traced from a real deployed conversation, then reproduced directly against
+# the cache): a "you haven't asked anything yet" answer generated for one
+# user's empty-history turn got cached globally under CACHE_VERSION 2, then
+# served verbatim to an unrelated later conversation that really had asked a
+# prior question. There's no way to distinguish "safe to cache globally" from
+# "session-specific, must never be cached" within general_chat by the intent
+# label alone, so the whole bucket is excluded rather than trying to
+# sub-classify it -- the cost is a few skipped LLM-call savings on repeated
+# small talk, which is cheap and infrequent enough not to matter.
+CACHEABLE_INTENTS = {IntentLabel.FAQ_LOOKUP}
 
 
 class Intent(BaseModel):

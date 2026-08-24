@@ -5,20 +5,24 @@ type ServerFrame =
   | { type: "status"; label: string }
   | { type: "done"; content: string }
 
-/** One WS connection per open thread. Protocol (see src/api/chat_ws.py):
- * client sends {content}, server streams {type:"status",label} frames while
- * working (guardrail scan, tool lookups -- most real answers never stream a
- * token at all, so these are the only progress signal), {type:"token",delta}
- * frames when it does, then exactly one {type:"done",content} frame carrying
- * the authoritative final text (post output-guardrail-scan -- may differ
- * from the concatenated deltas, e.g. PII redaction).
+/** One WS connection per `path` -- either an authenticated per-thread path
+ * (`/ws/chat/<threadId>`, see Chat.tsx) or the fixed no-login demo path
+ * (`/ws/demo`, see Demo.tsx and src/api/demo_ws.py). Protocol is identical
+ * either way (see src/api/chat_ws.py): client sends {content}, server
+ * streams {type:"status",label} frames while working (guardrail scan, tool
+ * lookups -- most real answers never stream a token at all, so these are the
+ * only progress signal), {type:"token",delta} frames when it does, then
+ * exactly one {type:"done",content} frame carrying the authoritative final
+ * text (post output-guardrail-scan -- may differ from the concatenated
+ * deltas, e.g. PII redaction; demo mode also (ab)uses this frame to surface
+ * a rate-limit message, see demo_ws.py).
  *
  * Status labels seen during a turn are also accumulated (client-side only --
  * the backend never persists them) and handed to `onDone` as a "steps
  * trail", e.g. ["Searching Flipkart's policies...", "Finalizing response..."]
  * -- purely a this-session UI nicety, gone on reload/thread-revisit. */
 export function useChatSocket(
-  threadId: string | null,
+  path: string | null,
   onDone: (content: string, steps: string[]) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
@@ -32,9 +36,9 @@ export function useChatSocket(
   const [statusLabel, setStatusLabel] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!threadId) return
+    if (!path) return
     const protocol = window.location.protocol === "https:" ? "wss" : "ws"
-    const ws = new WebSocket(`${protocol}://${window.location.host}/ws/chat/${threadId}`)
+    const ws = new WebSocket(`${protocol}://${window.location.host}${path}`)
     wsRef.current = ws
 
     ws.onopen = () => setConnected(true)
@@ -61,7 +65,7 @@ export function useChatSocket(
       ws.close()
       wsRef.current = null
     }
-  }, [threadId])
+  }, [path])
 
   const send = useCallback((content: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return

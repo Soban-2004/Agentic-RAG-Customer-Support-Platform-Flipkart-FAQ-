@@ -17,6 +17,7 @@ memory here: it survives across *separate* conversations entirely, anchored to
 an order ID instead of any session/thread identity.
 """
 
+import uuid
 from pathlib import Path
 
 from llama_index.core.memory import Memory
@@ -31,4 +32,18 @@ def build_session_memory(session_id: str, token_limit: int = 4000) -> Memory:
         session_id=session_id,
         token_limit=token_limit,
         async_database_uri=DB_URI,
+    )
+
+
+def build_ephemeral_memory(token_limit: int = 4000) -> Memory:
+    """Demo-mode memory (see src/api/demo_ws.py) -- a fresh, in-process-only
+    SQLite `:memory:` database per call instead of the shared chat_memory.db
+    file real sessions persist to. Discarded along with the connection that
+    created it, so a no-login demo conversation never touches disk and never
+    outlives its WebSocket -- there's no thread to revisit, so nothing to
+    persist in the first place."""
+    return Memory.from_defaults(
+        session_id=str(uuid.uuid4()),
+        token_limit=token_limit,
+        async_database_uri="sqlite+aiosqlite:///:memory:",
     )

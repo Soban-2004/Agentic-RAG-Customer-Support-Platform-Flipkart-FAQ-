@@ -33,6 +33,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langfuse import propagate_attributes
 from llama_index.core import Settings
 from llama_index.core.agent.workflow import AgentStream, ToolCall
+from llama_index.core.llms import ChatMessage, MessageRole
 from workflows.errors import WorkflowRuntimeError
 
 from src.agent.chat_agent import clear_precomputed_query_embedding, set_precomputed_query_embedding
@@ -86,8 +87,15 @@ async def _stream_text(websocket: WebSocket, text: str) -> None:
         await asyncio.sleep(_STREAM_CHUNK_DELAY_SECONDS)
 
 
-async def _handle_turn(websocket: WebSocket, thread_id: str, username: str, memory, content: str) -> None:
-    await chat_store.add_message(DATABASE_URL, thread_id, "user", content)
+async def _handle_turn(
+    websocket: WebSocket, thread_id: str, username: str, memory, content: str, *, persist: bool = True
+) -> None:
+    # persist=False is demo mode (src/api/demo_ws.py) -- an unauthenticated,
+    # no-history path with no real thread row to attach messages to. Every
+    # chat_store call below is gated on it; everything else (guardrails,
+    # cache, agent, tracing) runs identically for both paths.
+    if persist:
+        await chat_store.add_message(DATABASE_URL, thread_id, "user", content)
 
     tracing_client = get_tracing_client()
     span_cm = (
@@ -102,7 +110,7 @@ async def _handle_turn(websocket: WebSocket, thread_id: str, username: str, memo
             else contextlib.nullcontext()
         )
         with attrs_cm:
-            await _run_turn(websocket, thread_id, memory, content)
+            await _run_turn(websocket, thread_id, memory, content, persist=persist)
 
 
 async def _persist_assistant_reply(thread_id: str, content: str) -> None:
@@ -118,7 +126,7 @@ async def _persist_assistant_reply(thread_id: str, content: str) -> None:
         logger.exception("chat_ws: failed to persist assistant reply after it was already sent")
 
 
-async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) -> None:
+async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str, *, persist: bool = True) -> None:
     # 1. Guardrails: input scan. Blocked messages never reach the LLM/cache/tools.
     # Consistently the single biggest chunk of a turn's latency (several
     # ML scanners running in sequence, ~1.5-4.5s observed) -- worth its own
@@ -134,7 +142,8 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
         )
         await _stream_text(websocket, reply)
         await websocket.send_json({"type": "done", "content": reply})
-        await _persist_assistant_reply(thread_id, reply)
+        if persist:
+            await _persist_assistant_reply(thread_id, reply)
         return
 
     # 2. Planning: classify intent. Only FAQ/general_chat may use the semantic
@@ -157,7 +166,21 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
         if cached_response is not None:
             await _stream_text(websocket, cached_response)
             await websocket.send_json({"type": "done", "content": cached_response})
-            await _persist_assistant_reply(thread_id, cached_response)
+            # A cache hit never calls agent.run(), which is otherwise what
+            # writes an exchange into `memory` -- skip this and a cached
+            # answer is invisible to every later turn's recall (confirmed
+            # live: a repeated FAQ question correctly served from cache, then
+            # "what did I just ask" answered "you haven't asked anything").
+            # Recorded as a plain exchange, not via the agent, since no
+            # agent/tool run happened for it.
+            await memory.aput_messages(
+                [
+                    ChatMessage(role=MessageRole.USER, content=query),
+                    ChatMessage(role=MessageRole.ASSISTANT, content=cached_response),
+                ]
+            )
+            if persist:
+                await _persist_assistant_reply(thread_id, cached_response)
             return
 
     if query_embedding is not None:
@@ -192,7 +215,7 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
         # Persist whatever streamed through before the failure rather than
         # silently discarding it -- covers both a genuine agent error and a
         # mid-stream client disconnect (send_json above raises here too).
-        if full_response:
+        if full_response and persist:
             await chat_store.add_message(DATABASE_URL, thread_id, "assistant", full_response)
         full_response = (
             "Sorry, something went wrong on my end processing that. Please try again "
@@ -223,7 +246,8 @@ async def _run_turn(websocket: WebSocket, thread_id: str, memory, content: str) 
         await _stream_text(websocket, sanitized_response)
 
     await websocket.send_json({"type": "done", "content": sanitized_response})
-    await _persist_assistant_reply(thread_id, sanitized_response)
+    if persist:
+        await _persist_assistant_reply(thread_id, sanitized_response)
 
     # 5. Cache only clean, cache-eligible, successful responses -- never cache
     # something an output scanner flagged, a tool-routed (dynamic) answer, or
