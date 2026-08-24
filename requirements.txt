@@ -26,7 +26,14 @@ anyio
 # whole project, so it's the known-good version, not an arbitrary rollback.
 litellm==1.91.4
 pyyaml
-mcp
+# Pinned -- unpinned resolved to 2.1.0 on a fresh Render build, a breaking
+# major version that restructured/dropped mcp.server.fastmcp: src/tools/mcp_server.py
+# imports FastMCP straight from there, so the MCP stdio subprocess (spawned
+# with sys.executable -- same env, same pin applies to it too) crashed on
+# import before it could even respond to the client's initialize handshake
+# (surfaced up top as "mcp.shared.exceptions.MCPError: Connection closed").
+# 1.28.1 is what local dev has been running the whole project.
+mcp==1.28.1
 llama-index-tools-mcp
 llama-index-postprocessor-cohere-rerank
 llama-index-embeddings-cohere
