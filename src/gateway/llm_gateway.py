@@ -135,6 +135,27 @@ def build_gateway_llm(model_key: Optional[str] = None) -> LiteLLM:
             fallback_entry["api_base"] = api_base
         fallback_entries.append(fallback_entry)
 
+    # reasoning_effort (models.yaml, currently just fast/fallback -- both
+    # openai/gpt-oss) is a REQUEST-level kwarg, applied to every call this
+    # LLM object makes regardless of which model in the fallback chain
+    # actually serves it -- there's no per-fallback override in LiteLLM's
+    # fallbacks list. Safe because litellm.drop_params=True (above) silently
+    # drops it for any model/provider that doesn't recognize the param,
+    # rather than erroring -- see that flag's own comment. reasoning_format
+    # is set alongside it, not independently: a reasoning model given a
+    # value it can't honor either 400s (tool-calling with the "raw" default)
+    # or silently burns its whole completion budget on an internal trace and
+    # returns empty content (both verified live -- see models.yaml's fast/
+    # fallback comment) -- "hidden" avoids both without needing the trace
+    # itself for anything downstream.
+    additional_kwargs = {
+        "timeout": config.get("timeout_seconds", 30),
+        "fallbacks": fallback_entries,
+    }
+    if entry.get("reasoning_effort"):
+        additional_kwargs["reasoning_effort"] = entry["reasoning_effort"]
+        additional_kwargs["reasoning_format"] = "hidden"
+
     return LiteLLM(
         model=entry["model"],
         api_key=_resolve_api_key(entry),
@@ -142,8 +163,5 @@ def build_gateway_llm(model_key: Optional[str] = None) -> LiteLLM:
         temperature=entry.get("temperature", 0.2),
         max_tokens=entry.get("max_tokens"),
         max_retries=config.get("max_retries", 2),
-        additional_kwargs={
-            "timeout": config.get("timeout_seconds", 30),
-            "fallbacks": fallback_entries,
-        },
+        additional_kwargs=additional_kwargs,
     )

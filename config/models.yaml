@@ -16,23 +16,42 @@ timeout_seconds: 30
 max_retries: 1
 
 models:
-  # Primary model. Despite the "fast" key name this is llama-3.3-70b, not the
-  # smaller 8b model -- empirically 70b hits the malformed-tool-call quirk
-  # above noticeably less often than 8b, and also carries a higher Groq
-  # free-tier TPM quota, so this is a straight upgrade here, not just a
-  # reliability/cost tradeoff.
+  # Groq deprecated llama-3.3-70b-versatile AND llama-3.1-8b-instant (email
+  # notice 2026-06-17, shut down 2026-08-16 -- console.groq.com/docs/
+  # deprecations) -- both hard-404 now, "does not exist or you do not have
+  # access to it". Every Settings.llm call (RAG-answer synthesis, intent
+  # classification) was silently falling through this file's own fallback
+  # chain for ~2 weeks before this was caught, undetected specifically
+  # because classify_intent fails OPEN to a safe default on any error
+  # rather than raising -- see src/eval/data/intent_cases.json, added
+  # alongside this fix, for the regression guard.
+  #
+  # Replacements are Groq's own recommendation for each deprecated model
+  # (same source as above): gpt-oss-120b for the 70b-class primary,
+  # gpt-oss-20b for the 8b-class fallback -- both openai/gpt-oss, so they
+  # share the same reasoning_effort semantics (low/medium/high; unlike
+  # Qwen, gpt-oss 400s on "none" -- verified live). Unlike the old models,
+  # both are reasoning models: without reasoning_effort tuned down and
+  # reasoning_format=hidden, they either 400 (tool-calling with the "raw"
+  # reasoning_format default) or silently burn the whole completion budget
+  # on an internal trace and return empty content (verified live: happened
+  # at max_tokens=20, fixed at reasoning_effort=low +
+  # reasoning_format=hidden). See llm_gateway.py's build_gateway_llm for
+  # where these two fields actually get applied.
   fast:
-    model: groq/llama-3.3-70b-versatile
+    model: groq/openai/gpt-oss-120b
     api_key_env: CHATGROQ_API_KEY
     temperature: 0.2
     max_tokens: 1024
+    reasoning_effort: low
 
   # Fallback: smaller/faster model, used automatically if the primary errors/times out.
   fallback:
-    model: groq/llama-3.1-8b-instant
+    model: groq/openai/gpt-oss-20b
     api_key_env: CHATGROQ_API_KEY
     temperature: 0.2
     max_tokens: 1024
+    reasoning_effort: low
 
   # Used specifically for the agent's own tool-call decision step (see
   # src/agent/chat_agent.py's build_agent -- passed as its `llm`, NOT set as
@@ -65,4 +84,17 @@ models:
   # already used for everything else.
   prompt_guard:
     model: groq/meta-llama/llama-prompt-guard-2-86m
+    api_key_env: CHATGROQ_API_KEY
+
+  # Vision-capable model for the damage-claim photo attachment (see
+  # src/gateway/vision.py) -- NOT routed through build_gateway_llm(), same
+  # reasoning as prompt_guard above: a single-purpose call, no fallback
+  # apparatus needed, not Settings.llm or the agent's own llm. Llama 4 Scout
+  # (17Bx16 MoE) is Groq's smaller/faster natively-multimodal model, vs.
+  # Maverick (17Bx128E) -- plenty for describing a product-damage photo in a
+  # couple of sentences, and this is a supplementary enrichment step ahead
+  # of the real answer, not the answer itself, so cost/latency matters more
+  # here than peak capability (console.groq.com/docs/vision).
+  vision:
+    model: groq/meta-llama/llama-4-scout-17b-16e-instruct
     api_key_env: CHATGROQ_API_KEY
