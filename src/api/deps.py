@@ -20,12 +20,9 @@ class CurrentUser:
 
 
 async def get_current_user(request: Request) -> CurrentUser:
-    token = request.cookies.get(security.COOKIE_NAME)
-    username = security.decode_access_token(token)
-    if not username:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
-
-    row = await get_user_by_identifier(DATABASE_URL, username)
+    row = await security.session_user(
+        DATABASE_URL, request.cookies.get(security.COOKIE_NAME)
+    )
     if not row:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
     return CurrentUser(id=row["id"], identifier=row["identifier"])

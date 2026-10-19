@@ -1,65 +1,58 @@
-"""
-Simple in-memory per-IP rate limiter for auth endpoints (register, login).
+"""Expiring quotas. Production counters are atomic and shared in Postgres."""
 
-In-memory, not Redis-backed -- fine specifically because this app runs
-single-worker, single-process by design already (see main.py's docstring:
-the FunctionAgent/Settings/session-memory singletons all assume it). A
-second worker would mean a second, disconnected copy of this limiter's state
-too, same caveat as everything else process-wide here -- not a new one.
-
-Exists because /api/auth/register is reachable by anyone on the public
-internet with no admin gate, unlike the old CLI-only user provisioning --
-unlimited scripted account creation would hit this app's own Groq/Cohere/
-Qdrant free-tier quotas, not just clutter the users table.
-"""
-
+import hashlib
+import os
 import time
-from collections import defaultdict
-from typing import Union
+from fastapi import HTTPException
+from src.common.database import connection
 
-from fastapi import HTTPException, Request, WebSocket, status
-
-_hits: dict[str, list[float]] = defaultdict(list)
-
-# Request and WebSocket both expose .headers (Mapping-like) and .client
-# (Address | None) with the same shape -- a plain Union covers both without
-# needing a Protocol, since every caller passes one or the other verbatim.
-_Connection = Union[Request, WebSocket]
+_hits = {}
 
 
-def _client_ip(conn: _Connection) -> str:
-    # Render (and most PaaS hosts) put the app behind a reverse proxy --
-    # conn.client.host would be the proxy's own address, identical for
-    # every request, which would make per-IP limiting meaningless in
-    # production. X-Forwarded-For's first entry is the original client;
-    # falls back to conn.client.host for local dev, where there's no
-    # proxy and the header is absent.
-    forwarded = conn.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+def _client_ip(conn):
+    # Uvicorn handles forwarding only from configured trusted proxy peers.
+    # Never parse attacker-controlled X-Forwarded-For in application code.
     return conn.client.host if conn.client else "unknown"
 
 
-def enforce_rate_limit(conn: _Connection, bucket: str, limit: int, window_seconds: int) -> None:
-    """Raises 429 if this client has hit `bucket` more than `limit` times in
-    the last `window_seconds`. Call at the top of a route, before any real
-    work happens."""
-    key = f"{bucket}:{_client_ip(conn)}"
-    now = time.monotonic()
-    cutoff = now - window_seconds
-
-    hits = _hits[key]
-    # Prune expired hits lazily on each check instead of running a separate
-    # cleanup job -- fine at this traffic scale. (Known, accepted limit: an
-    # IP's dict entry itself isn't ever removed, only its hit list drained to
-    # empty -- a slow, unbounded-over-very-long-uptime memory creep that
-    # doesn't matter at a portfolio demo's actual traffic level.)
-    while hits and hits[0] < cutoff:
-        hits.pop(0)
-
-    if len(hits) >= limit:
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            "Too many attempts. Please try again in a few minutes.",
-        )
-    hits.append(now)
+async def enforce_rate_limit(
+    conn, bucket, limit, window_seconds, *, subject=None, units=1
+):
+    if units < 1 or units > limit:
+        raise HTTPException(429, "Request exceeds the available budget")
+    key = hashlib.sha256(f"{bucket}:{subject or _client_ip(conn)}".encode()).hexdigest()
+    if os.getenv("APP_ENV") == "production":
+        async with connection(os.environ["DATABASE_URL"]) as db:
+            accepted = await db.fetchval(
+                """INSERT INTO quota_buckets(key,hits,expires_at)
+                VALUES($1,$4,now()+$2*interval '1 second')
+                ON CONFLICT(key) DO UPDATE SET
+                hits=CASE WHEN quota_buckets.expires_at<=now() THEN $4 ELSE quota_buckets.hits+$4 END,
+                expires_at=CASE WHEN quota_buckets.expires_at<=now() THEN EXCLUDED.expires_at ELSE quota_buckets.expires_at END
+                WHERE quota_buckets.expires_at<=now() OR quota_buckets.hits+$4<=$3 RETURNING hits""",
+                key,
+                window_seconds,
+                limit,
+                units,
+            )
+            # Bounded opportunistic cleanup; expiry is enforced above regardless.
+            await db.execute(
+                "DELETE FROM quota_buckets WHERE key IN (SELECT key FROM quota_buckets WHERE expires_at<now() LIMIT 100)"
+            )
+        if accepted is not None:
+            return
+    else:
+        now = time.monotonic()
+        for old in [k for k, (_, expiry) in _hits.items() if expiry <= now]:
+            _hits.pop(old, None)
+        if key not in _hits and len(_hits) >= 10000:
+            raise HTTPException(503, "Quota storage is full; try later")
+        count, expiry = _hits.get(key, (0, now + window_seconds))
+        if count + units <= limit:
+            _hits[key] = (count + units, expiry)
+            return
+    raise HTTPException(
+        429,
+        "Request limit reached. Please try later.",
+        headers={"Retry-After": str(window_seconds)},
+    )

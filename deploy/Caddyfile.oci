@@ -1,0 +1,47 @@
+{
+	# Required for clients that omit SNI when connecting directly to an IP.
+	default_sni {$DEFAULT_SNI}
+}
+
+{$ARCHMIND_ADDRESS} {
+	tls {
+		# Let's Encrypt's short-lived profile supports public IP certificates.
+		issuer acme {
+			profile shortlived
+		}
+	}
+
+	encode zstd gzip
+
+	request_body {
+		max_size 26MB
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	redir /aster /aster/ 308
+
+	# Aster serves its compiled frontend, REST API, WebSockets, and health
+	# endpoints from one internal service. handle_path removes /aster before
+	# forwarding so FastAPI receives its native /api, /ws, and /health paths.
+	handle_path /aster/* {
+		reverse_proxy aster-app:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle_path /api/* {
+		reverse_proxy archmind-backend:8000 {
+			# ArchMind streams real progress events from the chat endpoint.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy archmind-frontend:3000
+	}
+}

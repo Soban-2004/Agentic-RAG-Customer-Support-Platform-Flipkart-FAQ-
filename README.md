@@ -1,490 +1,393 @@
-# Flipkart FAQ Chatbot — Agentic RAG Customer Support Platform
+# Aster
 
-An autonomous customer-support chatbot for Flipkart that doesn't just answer FAQ questions —
-it takes real actions: checking order status, checking refund status, saving account notes,
-and escalating unresolved issues to a human agent. Built as an end-to-end agentic RAG platform,
-not a thin wrapper around a single LLM call: intent routing, tool-calling, a provider-agnostic
-LLM gateway, guardrails, a semantic cache, hybrid retrieval with reranking, persistent memory,
-automated evaluation, and full request tracing all sit between the chat UI and the model.
+### A production-minded agentic RAG customer-support portfolio project
 
-<p align="left">
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white">
-  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-async%20API%20%2B%20WebSocket-009688?logo=fastapi&logoColor=white">
-  <img alt="React" src="https://img.shields.io/badge/React%2019-TypeScript-61DAFB?logo=react&logoColor=black">
-  <img alt="LlamaIndex" src="https://img.shields.io/badge/LlamaIndex-agentic%20RAG-black">
-  <img alt="Qdrant" src="https://img.shields.io/badge/Qdrant-hybrid%20vector%20search-DC244C">
-  <img alt="LiteLLM" src="https://img.shields.io/badge/LiteLLM-gateway%20%2B%20fallback-6E56CF">
-  <img alt="Docker" src="https://img.shields.io/badge/Docker-multi--stage%20build-2496ED?logo=docker&logoColor=white">
-  <img alt="Langfuse" src="https://img.shields.io/badge/Langfuse-observability-orange">
-</p>
+[![Live demo](https://img.shields.io/badge/live-demo-7C5CFC)](https://140.245.234.125/aster/)
+![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-WebSocket-009688?logo=fastapi&logoColor=white)
+![React 19](https://img.shields.io/badge/React_19-TypeScript-61DAFB?logo=react&logoColor=111)
+![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-OCI_Free_Tier-2496ED?logo=docker&logoColor=white)
 
-## 🎥 Demo
+**Live application:** [https://140.245.234.125/aster/](https://140.245.234.125/aster/)
 
-**Live:** [agentic-rag-customer-support-platform.onrender.com](https://agentic-rag-customer-support-platform.onrender.com)
-— sign up for a free account, or try the demo login: `demo` / `FlipkartDemo2026!`
+Aster is a full-stack customer-support assistant built to demonstrate more than a
+single retrieval call. It combines a cinematic React interface with bounded intent
+routing, grounded FAQ retrieval, account-scoped tools, durable conversations,
+guardrails, citations, idempotent turns, and production deployment on Oracle Cloud.
 
-> Deployed on Render's free tier, which sleeps after 15 minutes of inactivity — if it's been
-> idle, the first load can take 30-60s to wake up. Not broken, just cold-starting.
+The application uses a Flipkart help-centre dataset as its knowledge source. Order,
+refund, note, and handoff operations are deliberately simulated and clearly labelled;
+the project is not connected to Flipkart or any live commerce system.
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/e0e801a2-3d6a-4d72-ab79-064b15b4d020" controls width="90%"></video>
-</p>
+## Highlights
 
-## Table of contents
-
-- [Demo](#demo)
-- [What it does](#what-it-does)
-- [Architecture](#architecture)
-- [Request lifecycle: one chat turn](#request-lifecycle-one-chat-turn)
-- [Ingestion pipeline](#ingestion-pipeline)
-- [Tech stack](#tech-stack)
-- [Project layout](#project-layout)
-- [Getting started](#getting-started)
-- [Configuration](#configuration)
-- [Evaluation](#evaluation)
-- [Engineering deep dives](#engineering-deep-dives)
-- [Deployment](#deployment)
-
-## What it does
-
-| Layer | What's implemented |
-|---|---|
-| **UI** | Custom React 19 + TypeScript SPA, WebSocket token streaming, FastAPI backend serving both |
-| **Auth & chat history** | JWT cookie login + Postgres-backed thread list/resume (own schema, no vendor lock-in) |
-| **AI Gateway** | LiteLLM-based routing across 3 models/2 providers, automatic fallback, cost/latency logging |
-| **Guardrails** | Prompt-injection detection via Groq (Meta's Llama Prompt Guard 2), deterministic keyword prefilter — see [Engineering deep dives](#engineering-deep-dives) for why this replaced a 7-scanner local LLM Guard setup |
-| **Semantic cache** | Qdrant-backed, skips the LLM entirely on repeated/paraphrased FAQ questions |
-| **Agent** | LlamaIndex `FunctionAgent` — tool-calling agent (`search_faq` + 4 MCP tools) |
-| **Planning** | Intent classifier (FAQ / order status / refund / escalate / general chat) gates cache eligibility |
-| **MCP tools** | Real MCP server (stdio) exposing order/refund/note/escalation tools over a mock SQLite backend |
-| **Knowledge (RAG)** | Hybrid dense + BM25 sparse retrieval, cross-encoder reranking, idempotent ingestion |
-| **Memory** | SQL-persisted session memory + cross-session long-term notes anchored to order IDs |
-| **LLM** | Groq (Llama 3.3 70B / 3.1 8B) for generation, Ollama Cloud for tool-call decisions, via the Gateway |
-| **Evaluation** | RAGAS (faithfulness, relevancy, context precision/recall) + tool-routing + red-team guardrail suites, 25 scenarios |
-| **Observability** | Langfuse Cloud tracing (full request tree, per-user/session attribution, guardrail + cache scores) |
+- **Scope-controlled assistant:** sports, news, coding, recommendations, other
+  retailers, and mixed off-topic requests never reach the general-purpose answer path.
+- **Grounded RAG:** FAQ answers come from versioned Qdrant knowledge collections and
+  include source metadata.
+- **Safe agent tools:** order status, refund status, order notes, and handoff use a
+  trusted actor context and allow at most one account action per turn.
+- **Durable chat:** PostgreSQL stores users, revocable sessions, threads, messages,
+  turns, quotas, and an idempotent action ledger.
+- **Reliable WebSockets:** typed frames, bounded payloads, stable client message IDs,
+  replay after reconnect, turn deadlines, and committed completion semantics.
+- **Anonymous demo and accounts:** explore without signing in, or register to retain
+  conversation history.
+- **Image support:** JPEG, PNG, and WebP product-damage images are validated before a
+  bounded vision-description step.
+- **Accessible interface:** responsive layout, light/dark/system themes, keyboard
+  navigation, reduced-motion support, clear connection states, and mobile-safe input.
+- **Production controls:** secure cookies, origin checks, account/IP quotas, concurrency
+  limits, security headers, health probes, non-root containers, backups, and log rotation.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    User(["Browser"]) -- React SPA --> UI["React frontend\nfrontend/"]
-    UI -- "REST: login / threads" --> API["FastAPI backend\nmain.py + src/api/"]
-    UI -- "WebSocket: /ws/chat/:id" --> API
-    API -- auth / threads / messages --> PG[("PostgreSQL\nusers · threads · messages")]
-
-    API --> InGuard["Guardrails — input scan\nKeyword prefilter + Prompt Guard (Groq)"]
-    InGuard -- blocked --> Refusal(["Canned refusal"])
-    InGuard -- clean --> Planner["Planner\nintent classification"]
-
-    Planner --> CacheCheck{"cacheable intent\n+ cache hit?"}
-    CacheCheck -- hit --> CachedReply(["Cached response"])
-    CacheCheck -- miss --> Agent["FunctionAgent\nchat_agent.py"]
-
-    Agent --> SearchFAQ["search_faq tool\nhybrid retrieval + rerank"]
-    Agent --> MCP["4 MCP tools\nstdio subprocess"]
-    SearchFAQ --> Qdrant[("Qdrant\nFAQ vectors + response cache")]
-    MCP --> Backend[("SQLite\nmock orders / refunds / notes")]
-
-    SearchFAQ --> Cohere(["Cohere\nembed + rerank APIs"])
-    SearchFAQ --> Gateway["AI Gateway\nLiteLLM routing + fallback"]
-    Agent --> Gateway
-    Gateway --> Groq(["Groq\nLlama 3.3-70B / 3.1-8B / Prompt Guard 2"])
-    Gateway --> Ollama(["Ollama Cloud\ngemma4:cloud — tool calls, local dev only"])
-
-    Gateway --> FinalReply(["Final response"])
-
-    API -.session memory.-> ChatMem[("SQLite\nchat_memory.db")]
-    API -.traces.-> Langfuse[("Langfuse Cloud")]
-    Gateway -.scored by.-> Eval["run_eval.py\nRAGAS + tools + red-team"]
-```
-
-## Request lifecycle: one chat turn
-
-Every message runs the same pipeline, whether it resolves from cache, from the knowledge base,
-or from an MCP tool call. Status frames over the WebSocket keep the UI honest about *which*
-stage is running while it happens.
-
-```mermaid
-sequenceDiagram
-    participant U as User (Browser)
-    participant WS as chat_ws.py
-    participant G as Guardrails
-    participant P as Planner
-    participant C as Semantic Cache
-    participant A as FunctionAgent
-    participant T as search_faq / MCP tools
-    participant L as LLM Gateway (LiteLLM)
-
-    U->>WS: {"content": "..."}
-    WS->>G: scan_user_input()
-    Note over G: keyword prefilter, then<br/>Groq Prompt Guard 2 call
-    alt blocked
-        G-->>U: canned refusal (no LLM call)
-    else clean
-        G-->>WS: sanitized query
-        WS->>P: classify_intent()
-        P-->>WS: intent label
-        WS->>C: cacheable? get(query)
-        alt cache hit
-            C-->>U: cached response (simulated stream)
-        else cache miss
-            WS->>A: agent.run(query, memory)
-            A->>T: tool call (0 or 1, return_direct)
-            T-->>A: tool result
-            A->>L: synthesis / tool-call decision
-            L-->>A: completion
-            A-->>WS: streamed / final response
-            WS->>U: {"type":"done", "content": "..."}
-            WS->>C: set(query, response) if cacheable & clean
-        end
-    end
-```
-
-## Ingestion pipeline
-
-Offline, idempotent, run once and on every dataset change:
-
-```mermaid
 flowchart LR
-    CSV["faq_data.csv\n~2,000 rows"] --> Chunk["Chunk + tag\nsource_type: faq"]
-    PDF1["Flipkart-1.pdf"] --> Chunk
-    PDF2["Flipkart-2.pdf"] --> Chunk2["Chunk + tag\nsource_type: policy_doc"]
-    Chunk --> Embed["Dense embed\nCohere embed-v3 (or local bge-small)"]
-    Chunk2 --> Embed
-    Chunk --> Sparse["Sparse embed\nQdrant/bm25"]
-    Chunk2 --> Sparse
-    Embed --> Upsert["Upsert by uuid5(text)\nunchanged chunks are no-ops"]
-    Sparse --> Upsert
-    Upsert --> QdrantDB[("Qdrant: flipkart_faqs")]
+    Browser[React 19 SPA] -->|HTTPS / WebSocket| Caddy[Caddy]
+    Caddy --> API[FastAPI]
+    API --> Guard[Input guardrails]
+    Guard --> Planner[Intent and scope planner]
+
+    Planner -->|social / out of scope / multi-action| Fixed[Deterministic response]
+    Planner -->|public FAQ| FAQ[FAQ query engine]
+    Planner -->|account support| Agent[LlamaIndex FunctionAgent]
+
+    FAQ --> Cache[(Qdrant semantic cache)]
+    FAQ --> Knowledge[(Versioned Qdrant knowledge)]
+    FAQ --> Cohere[Cohere embed + rerank]
+    FAQ --> Groq[Groq synthesis]
+
+    Agent --> Search[search_faq]
+    Agent --> Tools[Actor-scoped support tools]
+    Search --> FAQ
+    Tools --> Fixtures[Simulated commerce records]
+    Tools --> Postgres[(PostgreSQL action ledger)]
+
+    API --> Postgres
+    API -. optional traces .-> Langfuse[Langfuse]
 ```
 
-## Tech stack
+### One chat turn
 
-| Concern | Choice |
-|---|---|
-| Agent framework | LlamaIndex `FunctionAgent` (tool-calling agent workflow) |
-| LLM gateway | LiteLLM — provider-agnostic routing, fallback, retries, cost/latency logging |
-| LLMs | Groq `llama-3.3-70b-versatile` (primary) → `llama-3.1-8b-instant` (fallback); Ollama Cloud `gemma4:cloud` (agent tool-call decisions only) |
-| Vector DB | Qdrant (self-hosted via Docker) — hybrid dense + sparse, one collection for FAQs, one for the semantic cache |
-| Embeddings | Cohere `embed-english-v3.0` (API) in production, `BAAI/bge-small-en-v1.5` (local FastEmbed) in dev — same toggle as the reranker, see `src/common/embed_factory.py` — + `Qdrant/bm25` (sparse, always local, stateless) |
-| Reranker | Cohere `rerank-english-v3.0` (API) in production, local `cross-encoder/ms-marco-MiniLM-L-6-v2` in dev |
-| Guardrails | Deterministic keyword prefilter + Groq's `llama-prompt-guard-2-86m` (Meta's dedicated prompt-injection/jailbreak model) — see [Engineering deep dives](#engineering-deep-dives) |
-| Tool protocol | [Model Context Protocol](https://modelcontextprotocol.io) — real stdio MCP server, not in-process function calls |
-| Backend | FastAPI, WebSocket streaming, asyncpg (no ORM) |
-| Frontend | React 19 + TypeScript, Vite, Tailwind CSS v4 (CSS-first theming), Framer Motion |
-| Auth | JWT in an httpOnly cookie, bcrypt password hashing |
-| Persistence | PostgreSQL (users/threads/messages), SQLite (session memory, mock backend) |
-| Evaluation | [RAGAS](https://github.com/explodinggradients/ragas) + custom tool-routing and red-team suites |
-| Observability | Langfuse Cloud via OpenInference's LlamaIndex instrumentor |
-| Deployment | Docker (multi-stage: Node build → Python runtime) — see [Deployment](#deployment) |
+1. FastAPI validates the WebSocket frame, session, origin, quotas, payload size, and
+   idempotency key.
+2. Input guardrails reject clear dangerous requests and prompt-injection attempts.
+3. The planner assigns one of eight bounded intents: FAQ, order status, refund status,
+   order note, escalation, multiple actions, social chat, or out of scope.
+4. Social, out-of-scope, and multi-action messages receive deterministic responses.
+5. Exact public FAQ questions may use the namespaced semantic cache. Other supported
+   requests use grounded retrieval or one authorized tool.
+6. The full answer is reviewed before delivery. The server commits authenticated turns
+   before sending the final completion event.
 
-## Project layout
+## Product behavior
 
-```
-main.py                    FastAPI entrypoint — agent/cache built once at process startup
-frontend/                  React + TypeScript + Tailwind UI (Vite)
-  src/pages/                 Login, Chat
-  src/components/            Sidebar, MessageBubble, ChatInput, StarterPrompts, MessageActions
-  src/hooks/                 useAuth, useChatSocket, useTheme
-  src/api/client.ts          fetch wrapper (cookie-authenticated)
-docker-compose.yml          Self-hosted Qdrant container
-Dockerfile                  Multi-stage build: frontend (node:20-slim) → backend (python:3.10-slim)
-db/schema.sql               Postgres schema: users / threads / messages
-config/models.yaml          AI Gateway model routing config
+| Area | Behavior |
+| --- | --- |
+| FAQ | Returns, refunds, payments, EMI, delivery, cancellation, account help, and other indexed policies |
+| Orders | Looks up clearly labelled demonstration orders such as `FK1001` |
+| Refunds | Looks up clearly labelled demonstration refunds such as `RF2001` |
+| Notes | Stores an account-private simulation note; demo notes last only for that socket session |
+| Handoff | Creates a deterministic simulation ticket and states that no real agent was notified |
+| Images | Adds an unverified visual description to a support question; it is never treated as proof |
+| General knowledge | Returns a fixed support-scope message without asking the answer model |
+| Multiple actions | Requests one action at a time and executes no tool |
+
+## Reliability and safety design
+
+- **Fail closed:** unavailable input checking or intent classification cannot fall
+  through to an unrestricted answer.
+- **Least-privilege tools:** identity comes from a server-side context, never from an
+  LLM argument. Every authenticated tool call rechecks the session and thread owner.
+- **Idempotent mutations:** action keys combine the durable turn, action, and resource.
+  Retries return the recorded result instead of duplicating the operation.
+- **Regeneration safety:** regeneration is versioned and read-only; responses involving
+  account actions cannot be replayed as mutations.
+- **Private cache boundary:** only a closed vocabulary of public FAQ questions can enter
+  the shared semantic cache. Account and conversation-specific content cannot.
+- **Knowledge releases:** ingestion builds a complete immutable collection, validates
+  it, and atomically moves the live alias. Previous revisions remain available for
+  rollback.
+- **Output hygiene:** unapproved external URLs, credentials, card-like numbers, email
+  addresses, and Indian phone numbers are removed before delivery.
+
+## Technology
+
+| Concern | Implementation |
+| --- | --- |
+| Frontend | React 19, TypeScript 6, Vite 8, Tailwind CSS 4, Framer Motion |
+| API | FastAPI, Uvicorn, typed REST and WebSocket contracts |
+| Agent/RAG | LlamaIndex `FunctionAgent`, grounded query engine, source evidence |
+| LLM gateway | LiteLLM with explicit Groq `gpt-oss-120b` to `gpt-oss-20b` fallback |
+| Guardrails | Deterministic checks plus Meta Llama Prompt Guard 2 on Groq |
+| Vision | Llama 4 Scout on Groq |
+| Embeddings | Cohere `embed-english-v3.0` in production; FastEmbed local fallback |
+| Reranking | Cohere `rerank-english-v3.0` in production; local cross-encoder fallback |
+| Vector storage | Qdrant 1.16; dense production retrieval and hybrid local retrieval |
+| Persistence | PostgreSQL 17 through bounded asyncpg pools |
+| Authentication | Argon2id, legacy bcrypt verification, revocable 8-hour JWT sessions |
+| Observability | Structured logs and optional Langfuse/OpenInference traces |
+| Deployment | Multi-stage Docker image, Docker Compose, Caddy, OCI Always Free compute |
+
+## Repository layout
+
+```text
+frontend/                     React application and design system
 src/
-  api/                       FastAPI routers: auth.py, threads.py, chat_ws.py, security.py, deps.py, state.py
-  persistence/chat_store.py  Thread/message persistence (asyncpg)
-  auth/                      Password auth (store.py) + user-provisioning CLI (manage_users.py)
-  common/qdrant_factory.py   Local-embedded vs remote/cloud Qdrant client
-  gateway/                   AI Gateway: llm_gateway.py, guardrails.py, cache.py
-  agent/                     planner.py (intent classifier), chat_agent.py (FunctionAgent + tools)
-  tools/                     mcp_server.py (MCP server) + mock_backend.py (mock SQLite backend)
-  memory/persistent_memory.py  SQL-persisted session memory
-  ingestion/embed_qdrant.py  Offline chunk + hybrid-embed + upsert pipeline
-  eval/run_eval.py           RAGAS + tool-calling + red-team eval suites (eval/data/, eval/results/)
-  observability/tracing.py   Langfuse tracing (OpenInference LlamaIndex instrumentor)
-data/
-  dataset/                    FAQ CSV + Flipkart policy PDFs
-  data_scraper/                Selenium scraper used to build the dataset
-  data_pre.ipynb               Data prep notebook
+  agent/                      Planner, grounded answer orchestration, agent tools
+  api/                        Auth, threads, WebSockets, protocol, settings, limits
+  auth/                       Argon2id user storage and admin user management
+  common/                     Database, Qdrant, embedding, knowledge-release helpers
+  gateway/                    LLM gateway, guardrails, semantic cache, vision
+  ingestion/                  Immutable knowledge publication pipeline
+  memory/                     Conversation-memory adapter
+  persistence/                Chat store, atomic turns, migrations, maintenance
+  tools/                      Actor-scoped service and optional MCP adapter
+  eval/                       Intent, RAG, tool, and red-team evaluation suites
+db/                           Base schema and additive migrations
+deploy/                       OCI Compose, Caddy example, backup script
+docs/operations/              Rollout and remediation notes
+docs/reviews/                 Production review and validation evidence
+tests/                        Deterministic backend and integration tests
+main.py                       FastAPI bootstrap and application lifespan
+Dockerfile                    Node build stage and non-root Python runtime
 ```
 
-## Getting started
+## Run locally
 
-1. **Start Qdrant** (self-hosted via Docker):
-   ```bash
-   docker compose up -d
-   ```
+### Prerequisites
 
-2. **Backend dependencies**:
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate       # Windows
-   pip install -r requirements-dev.txt
-   ```
-   `requirements-dev.txt` adds the local-model fallback path (used automatically whenever
-   `COHERE_API_KEY` isn't set — see [Configuration](#configuration)) on top of the lean
-   `requirements.txt` the Docker image actually builds from. Deploying without a Cohere key
-   works too, it just means installing the heavier local-model set — see the memory deep dive
-   below for why that's a meaningfully different footprint, not just a style preference.
+- Python **3.12**
+- Node.js **22**
+- Docker Desktop
+- Groq API key
+- Cohere API key, recommended for the same lightweight path used in production
 
-3. **Frontend dependencies** (Node.js 20+):
-   ```bash
-   cd frontend && npm install && cd ..
-   ```
+### 1. Start PostgreSQL and Qdrant
 
-4. **Set up Postgres** for login + chat history — create a database (e.g. `flipkart_chatbot`)
-   and run [`db/schema.sql`](db/schema.sql) against it once:
-   ```bash
-   psql -d flipkart_chatbot -f db/schema.sql
-   ```
+```bash
+docker run --name aster-postgres-dev \
+  -e POSTGRES_PASSWORD=aster \
+  -e POSTGRES_DB=aster \
+  -p 5432:5432 -d postgres:17-alpine
 
-5. **Install [Ollama](https://ollama.com)** and pull the agent's dedicated tool-calling model
-   (not optional — see [Engineering deep dives](#engineering-deep-dives) for why):
-   ```bash
-   ollama signin
-   ollama pull gemma4:cloud
-   ```
-   Leave the daemon running; `config/models.yaml`'s `tool_call` entry expects it at
-   `http://localhost:11434`.
+docker compose up -d qdrant
+```
 
-6. **Configure `.env`**:
-   ```env
-   CHATGROQ_API_KEY=...                # free at console.groq.com
-   QDRANT_URL=http://localhost:6333
-   DATABASE_URL=postgresql+asyncpg://postgres:PASSWORD@localhost:5432/flipkart_chatbot
-   JWT_SECRET=...                      # e.g. python -c "import secrets; print(secrets.token_urlsafe(32))"
-   # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY=...   # optional, see Observability
-   # COHERE_API_KEY=...                              # optional, see Configuration + Engineering deep dives
-   ```
+### 2. Install dependencies
 
-7. **Create a login user** (no self-serve signup):
-   ```bash
-   python src/auth/manage_users.py create alice "some-password"
-   ```
+```bash
+python -m venv venv
 
-8. **Ingest the FAQ dataset**:
-   ```bash
-   python src/ingestion/embed_qdrant.py           # incremental upsert, safe to re-run
-   python src/ingestion/embed_qdrant.py --reset    # full rebuild
-   ```
+# Windows PowerShell
+./venv/Scripts/Activate.ps1
 
-9. **Run it** (two processes in dev):
-   ```bash
-   python -m uvicorn main:app --reload --reload-dir src
-   cd frontend && npm run dev      # http://localhost:5173, proxies /api and /ws to :8000
-   ```
-   In production (or via Docker), FastAPI serves the built frontend itself on a single port.
+# macOS/Linux
+# source venv/bin/activate
 
-   > **Windows note:** use `python -m uvicorn`, not the bare `uvicorn` executable — the
-   > standalone launcher can lose track of the venv interpreter on reload. Also always pass
-   > `--reload-dir src`: without it, uvicorn watches the whole project tree, including `venv/`
-   > (a guardrail model's one-time download mid-request force-restarted the server during
-   > testing) and `data/` (rewritten on every chat turn). Single worker only — the agent and
-   > SQLite-backed session memory are process-wide singletons built once at startup.
+pip install -r requirements-dev.txt
+cd frontend
+npm ci
+cd ..
+```
 
-10. **Or run via Docker**:
-    ```bash
-    docker build -t flipkart-chatbot .
-    docker run -p 8000:8000 --env-file .env -e OLLAMA_API_BASE=http://host.docker.internal:11434 flipkart-chatbot
-    ```
+### 3. Configure the environment
+
+Copy `.env.example` to `.env`, then set at least:
+
+```env
+APP_ENV=development
+PUBLIC_BASE_PATH=/
+DATABASE_URL=postgresql://postgres:aster@127.0.0.1:5432/aster
+JWT_SECRET=generate-a-random-secret-with-at-least-32-characters
+CHATGROQ_API_KEY=your-groq-key
+COHERE_API_KEY=your-cohere-key
+QDRANT_URL=http://127.0.0.1:6333
+TRUSTED_ORIGINS=http://localhost:5173
+
+# Use Groq for tool decisions without a local Ollama daemon.
+AGENT_TOOL_CALL_MODEL_KEY=fallback
+```
+
+Generate a signing secret with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+If `COHERE_API_KEY` is omitted, the development requirements provide local embedding
+and reranking models. Switching between local and Cohere embeddings requires publishing
+a new knowledge release because their vector dimensions differ.
+
+### 4. Prepare storage
+
+```bash
+python -m src.persistence.migrate
+python -m src.ingestion.embed_qdrant
+```
+
+### 5. Start the application
+
+Terminal one:
+
+```bash
+python -m uvicorn main:app --reload --reload-dir src --port 8000
+```
+
+Terminal two:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173). Vite proxies `/api` and `/ws`
+to FastAPI, keeping browser requests same-origin.
 
 ## Configuration
 
 | Variable | Required | Purpose |
-|---|---|---|
-| `CHATGROQ_API_KEY` | Yes | Groq API key for the primary/fallback LLMs |
-| `QDRANT_URL` | No (defaults to embedded/local) | Points at the Docker Qdrant container |
-| `DATABASE_URL` | Yes | Postgres connection string (asyncpg) for auth + chat history |
-| `JWT_SECRET` | Yes | Signs the login session cookie |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Enables Langfuse tracing; every trace call is a no-op without them |
-| `OLLAMA_API_BASE` | Only in Docker | Overrides `config/models.yaml`'s `localhost:11434` (which means *the container itself* otherwise) |
-| `QDRANT_API_KEY` | Only for Qdrant Cloud | No API key needed for the default unsecured local/Docker Qdrant |
-| `AGENT_TOOL_CALL_MODEL_KEY` | No (defaults to `tool_call`/Ollama) | Overrides which `config/models.yaml` entry the agent's tool-call step uses — set to `fallback` on a host that can't keep an `ollama signin`'d daemon running in the background (see [Deployment](#deployment)) |
-| `PORT` | No (defaults to 8000) | Overrides the port the server listens on — some hosts assign their own and expect the container to read it |
-| `COHERE_API_KEY` | No (defaults to local models) | Switches the embedder and reranker to Cohere's hosted APIs instead of loading them locally — see [Engineering deep dives](#engineering-deep-dives) for why |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | PostgreSQL DSN for accounts, sessions, conversations, quotas, and actions |
+| `JWT_SECRET` | Yes | Signs session tokens; production requires a strong non-placeholder value |
+| `CHATGROQ_API_KEY` | Yes | Answer, planning, guardrail, tool-decision, and vision models |
+| `COHERE_API_KEY` | Production | Hosted 1024-dimensional embeddings and reranking |
+| `QDRANT_URL` | Production | Qdrant service URL; development may use embedded storage instead |
+| `QDRANT_API_KEY` | Cloud only | Qdrant Cloud authentication |
+| `KNOWLEDGE_ALIAS` | No | Live knowledge alias; defaults to `flipkart_faqs_live` |
+| `TRUSTED_ORIGINS` | Production | Comma-separated exact HTTPS origins; wildcards are rejected |
+| `PUBLIC_BASE_PATH` | No | Mount and cookie path; `/aster/` in the OCI deployment |
+| `AGENT_TOOL_CALL_MODEL_KEY` | No | Model-config key used for agent tool decisions |
+| `ENABLE_DEMO` | No | Enables the anonymous WebSocket demo |
+| `ENABLE_SHARED_FAQ_CACHE` | No | Enables the tightly allowlisted cross-user FAQ cache |
+| `ENABLE_CONTENT_TRACING` | No | Allows content in optional traces; keep `false` in production |
+| `MAX_CONCURRENT_TURNS` | No | Process-wide work bound |
+| `CHAT_PER_HOUR` | No | Per-account authenticated chat limit |
+| `TURN_TIMEOUT_SECONDS` | No | End-to-end turn deadline |
+| `WS_IDLE_TIMEOUT_SECONDS` | No | Idle WebSocket timeout |
+| `MAX_FRAME_BYTES` | No | Transport frame limit |
 
-## Evaluation
+See [`.env.example`](.env.example) for all operational defaults.
 
-`src/eval/run_eval.py` — three independent suites run against the live stack (real Groq calls,
-real Qdrant), no mocking:
+## Tests and evaluation
 
-```bash
-python src/eval/run_eval.py                     # all three suites
-python src/eval/run_eval.py --suite rag          # RAGAS only
-python src/eval/run_eval.py --suite tools        # agent tool-routing only
-python src/eval/run_eval.py --suite guardrails   # red-team only, no LLM calls
-```
+### Deterministic test suite
 
-- **RAG (RAGAS)** — 6 golden questions through the real query engine, scored on faithfulness,
-  answer relevancy, context precision, context recall. Deliberately small and throttled to
-  `max_workers=1` — Groq's free-tier TPM budget can't absorb RAGAS's judge-call volume at
-  higher concurrency.
-- **Tool-calling** — 9 scenarios through the real agent, asserting the expected tool was (or
-  wasn't) called and the answer contains the expected content. This is what actually catches
-  routing regressions when a prompt or tool description changes — RAGAS alone only scores
-  retrieval/generation.
-- **Guardrails (red-team)** — 10 adversarial cases + PII-redaction checks against
-  `guardrails.py` directly, verifying both that attacks are blocked *and* that legitimate
-  questions aren't (a guardrail that blocks everything scores "safe" but is useless).
-
-**Latest verified results:** guardrails **11/11**, tool-calling **9/9**, RAGAS faithfulness
-**1.00**, answer relevancy **0.87**, context precision **0.78**, context recall **1.00**.
-
-## Engineering deep dives
-
-<details>
-<summary><strong>Why the agent's tool-calling model isn't Groq</strong></summary>
-
-Llama models on Groq occasionally emit a malformed tool-call that Groq's own API rejects with
-`tool_use_failed` — and a bug in LiteLLM's Groq-specific streaming-error parser turns that
-clean rejection into an unhandled crash instead of a catchable error, killing the turn.
-`max_iterations` and gateway fallback don't help, since the crash happens *before* LiteLLM's
-own retry logic runs.
-
-Fixed by giving the agent's tool-call decision step a dedicated model
-(`config/models.yaml`'s `tool_call` entry — `gemma4:cloud` via a local Ollama daemon proxying
-to Ollama Cloud) instead of the primary Groq model. `Settings.llm` (Groq) still handles
-RAG-answer synthesis and intent classification, both plain text generation and never the
-actual problem. Two extra fixes were needed to make this work at all: `litellm.drop_params =
-True` (Ollama rejects the `parallel_tool_calls` param LlamaIndex sends unconditionally), and
-manually registering `gemma4:cloud` as function-calling-capable in LiteLLM's model registry
-(it reports `False` purely because LiteLLM's static registry predates the model, not because
-it can't do it — verified directly against Ollama's raw API). Verified live: 8/8 distinct FAQ
-questions forcing fresh tool calls succeeded with zero crashes, where the same test previously
-failed a meaningful fraction of the time.
-
-This does mean the Ollama daemon is a real, non-optional dependency for local dev. For a
-deployment target that can't keep one signed in and running in the background — true of most
-free-tier hosts, which don't support a persistent authenticated background process alongside
-the main server — `AGENT_TOOL_CALL_MODEL_KEY=fallback` (see [Configuration](#configuration))
-routes tool-calling to Groq's fallback model instead, accepting the rare malformed-tool-call
-failure this whole fix exists to avoid. That failure is already caught by `chat_ws.py`'s
-try/except and degrades to one failed turn with a generic error message, not a crash — an
-acceptable trade for a deployment that can't run Ollama at all, not a regression for local dev
-where Ollama stays the default.
-
-</details>
-
-<details>
-<summary><strong>Why guardrails, the reranker, and the embedder all moved from local models to APIs</strong></summary>
-
-This app originally ran 7 local LLM Guard scanners (~1.3GB of transformer models once loaded)
-plus a local cross-encoder reranker plus a local embedder — fine on a dev machine, but nowhere
-close to fitting a free-tier host's ~512MB RAM ceiling. Trimming scanners one at a time barely
-moved the number, and tracing why turned up something not obvious from the outside: importing
-*anything* from the `llm_guard` package — even its lightest, model-free `TokenLimit` scanner —
-pulled in ~450MB unconditionally, because `torch`/`transformers` are imported by the library's
-base classes, not per-scanner. There was no "keep the cheap ones" option; the cost was in using
-the library at all, confirmed by direct process-memory measurement (`Get-Process`'s
-`WorkingSet64`), not assumed from documentation.
-
-The fix wasn't a smaller local model, it was removing local inference from the hot path
-entirely: prompt-injection detection now calls Groq's `llama-prompt-guard-2-86m` (Meta's
-dedicated jailbreak/injection classifier — arguably a better fit than LLM Guard's
-general-purpose scanner, not just a smaller one), and the embedder/reranker call Cohere's
-hosted APIs instead of loading `bge-small`/a cross-encoder in-process. Net effect, measured
-end-to-end with the same methodology: **1,309MB → 315MB**. Output scanning (PII redaction,
-refusal/URL checks) was dropped rather than replaced — this bot's responses come only from a
-controlled FAQ knowledge base and fixed MCP tool outputs, not user-generated content being
-echoed back, so the exposure a general-purpose assistant would have doesn't really apply here.
-
-All three swaps are env-var-gated, not hardcoded: `COHERE_API_KEY` unset falls back to the
-local embedder/reranker (`src/common/embed_factory.py`, `src/agent/chat_agent.py`) with zero
-behavior change for local dev, which never had a memory constraint to begin with. Switching
-embedders isn't a drop-in config change though — Cohere's `embed-english-v3.0` is 1024-dim vs.
-`bge-small`'s 384-dim, so toggling it requires a full re-ingest (`embed_qdrant.py --reset`),
-not an incremental upsert, since a collection can't mix vector dimensions.
-
-</details>
-
-<details>
-<summary><strong>Why the semantic cache is versioned</strong></summary>
-
-A real incident: a "modes of payment" answer got cached before the FAQ prompt was changed to
-require Markdown formatting, and kept being served unformatted, verbatim, to every later
-session asking a similar question — nothing tied a cache entry to the prompt/template that
-produced it. `CACHE_VERSION` in `src/gateway/cache.py` fixes this: every entry carries the
-version it was written with, checked on read the same way the 7-day TTL is. Bump the version
-whenever a prompt change would make previously-cached answers wrong, and stale entries stop
-being served automatically — no manual cache wipe.
-
-</details>
-
-<details>
-<summary><strong>Why a real MCP server instead of in-process functions</strong></summary>
-
-`src/tools/mcp_server.py` is a genuine [Model Context Protocol](https://modelcontextprotocol.io)
-server (stdio transport, `FastMCP`), launched as a subprocess and spoken to over the actual MCP
-client/server protocol — the same way the agent would talk to a real external tool server, not
-a shortcut through plain Python function calls. It exposes `get_order_status`,
-`get_refund_status`, `add_order_note`, and `escalate_to_human` against a mock SQLite backend.
-Every tool (including `search_faq`) is `return_direct=True`: the result is returned to the user
-with no further LLM synthesis round-trip, which halves token usage per turn and avoids a
-failure mode found during testing where the agent would otherwise sometimes re-invoke a tool
-across an extra synthesis step.
-
-</details>
-
-<details>
-<summary><strong>Why a custom React/FastAPI UI replaced Chainlit</strong></summary>
-
-The project originally ran on Chainlit (a batteries-included chat UI framework). Two concrete,
-reproducible incidents forced the migration to a custom React + TypeScript frontend and FastAPI
-backend: (1) a Chainlit version upgrade silently added columns to its internal persistence
-schema that the reverse-engineered local schema didn't have, breaking tool-call step
-persistence invisibly (fire-and-forget `asyncio.create_task`, no surfaced error); (2) a
-long-standing, unresolved upstream Chainlit bug where reopening a past thread sometimes showed
-only the user's messages, not the assistant's replies. Both are now structurally impossible —
-`GET /api/threads/{id}` is the same code path for a fresh load and a sidebar resume, returning
-exactly the rows in Postgres, with no separate vendor rendering layer that could disagree with
-the database. Every other layer (agent, RAG, MCP tools, guardrails, cache, memory, eval,
-tracing) was untouched — this was a UI/serving-layer swap, not a system rebuild.
-
-</details>
-
-<details>
-<summary><strong>Observability: what actually gets traced</strong></summary>
-
-`src/observability/tracing.py` registers OpenInference's `LlamaIndexInstrumentor`
-(OpenTelemetry-based) against Langfuse Cloud, so one trace per chat message shows the whole
-tree: agent step → tool call (or retrieval → rerank → synthesis) → the underlying LLM
-generation, with latency and token usage on every span — a few lines of setup, not manual
-instrumentation scattered through the agent code. Every turn is wrapped with
-`propagate_attributes(user_id=..., session_id=...)` using the authenticated username and the
-thread's stable ID, so traces are filterable by user or conversation. Guardrail
-blocks/redactions and cache hits/misses are fired as Langfuse scores, and eval runs are tagged
-`["eval", ...]` so they're visible in the same project without polluting production trace
-views. Entirely optional — every function is a no-op without Langfuse keys set.
-
-</details>
-
-## Deployment
-
-Single multi-stage `Dockerfile`: a `node:20-slim` stage builds the React frontend, a
-`python:3.10-slim` stage runs the FastAPI app and serves the built static frontend directly —
-one container, one port, no separate frontend process or CORS/proxy setup needed in production.
-Qdrant and Postgres are external services either way, pointed to via `QDRANT_URL` and
-`DATABASE_URL` — Docker Compose for local Qdrant, or any managed/cloud provider for either.
+Integration tests refuse to run against a default PostgreSQL database. They require a
+localhost instance on a nondefault port with the database name `aster_test`.
 
 ```bash
-docker build -t flipkart-chatbot .
-docker run -p 8000:8000 --env-file .env flipkart-chatbot
+docker run --rm --name aster-backend-tests \
+  -e POSTGRES_PASSWORD=aster-test-only \
+  -e POSTGRES_DB=aster_test \
+  -p 55478:5432 -d postgres:17-alpine
 ```
 
-The listen port is read from `$PORT` (defaults to 8000) — hosts that assign their own port
-just need it passed as an env var, no image rebuild. Two env vars matter for a free-tier
-deployment specifically, both optional and both no-op for local dev:
+PowerShell:
 
-- `AGENT_TOOL_CALL_MODEL_KEY=fallback` — routes the agent's tool-call step to Groq instead of
-  Ollama Cloud, for a host that can't keep an `ollama signin`'d daemon authenticated in the
-  background (true of most free-tier hosts). See the "Why the agent's tool-calling model isn't
-  Groq" deep dive above for why that step normally avoids Groq, and why falling back to it here
-  is an accepted, gracefully-caught trade-off rather than a silent failure mode.
-- `COHERE_API_KEY` — moves the embedder and reranker to Cohere's hosted APIs instead of loading
-  them locally, and combined with dropping local guardrail models (see the deep dive above)
-  brings the process's real memory footprint from ~1.3GB down to ~315MB — the difference between
-  fitting a free tier's ~512MB RAM ceiling and not.
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://postgres:aster-test-only@127.0.0.1:55478/aster_test"
+./venv/Scripts/python.exe -m pytest -q
+```
 
-There's no permanently-hosted public instance right now — see the [Demo](#demo) section above
-for a recorded walkthrough instead of a live link.
+Bash:
+
+```bash
+TEST_DATABASE_URL=postgresql://postgres:aster-test-only@127.0.0.1:55478/aster_test \
+  python -m pytest -q
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm run build
+npm run lint
+```
+
+### Live-model evaluation
+
+The evaluation runner uses configured providers and consumes API quota:
+
+```bash
+pip install -r requirements-eval.txt
+python -m src.eval.run_eval --suite intent
+python -m src.eval.run_eval --suite guardrails
+python -m src.eval.run_eval --suite tools
+python -m src.eval.run_eval --suite rag
+```
+
+Latest final verification:
+
+- **71/71** deterministic backend and PostgreSQL tests passed.
+- **24/24** live intent cases passed, including off-topic, mixed-scope, consent,
+  manufacturer/retailer ambiguity, order-note, and multi-action cases.
+- Production WebSocket smoke tests passed for FAQ citations, tools, notes, simulated
+  handoff, prompt injection, invalid frames, reconnect-safe IDs, and scope control.
+- Frontend TypeScript/Vite build and lint passed.
+
+Detailed evidence: [functional validation report](docs/reviews/functional-validation-2026-10-17.md).
+
+## Production deployment
+
+The live application runs on an **OCI Always Free A1** instance with **2 OCPUs, 12 GB
+RAM, and a 45 GB boot volume**. Caddy terminates HTTPS using a publicly trusted,
+automatically renewed Let's Encrypt IP certificate. PostgreSQL and Qdrant are private
+Docker-network services with named volumes and no published host ports.
+
+The stack is defined in [`deploy/compose.production.yml`](deploy/compose.production.yml):
+
+- `aster-app` — FastAPI plus the compiled React SPA, internal port `8000`
+- `aster-postgres` — PostgreSQL 17, internal port `5432`
+- `aster-qdrant` — Qdrant 1.16, internal ports `6333/6334`
+- shared Caddy gateway — public ports `80/443`, routing `/aster/`
+
+Deployment order:
+
+1. Copy secrets to `deploy/production.env` with mode `600`.
+2. Start PostgreSQL and Qdrant.
+3. Run the migration profile.
+4. Publish a knowledge revision with the knowledge profile.
+5. Start the application and verify `/health/live` and `/health/ready`.
+6. Reload the shared Caddy configuration.
+
+Read [the rollout guide](docs/operations/backend-rollout.md) before deploying schema or
+knowledge changes. `deploy/backup.sh` creates compressed PostgreSQL backups and retains
+14 days; production runs it daily through cron.
+
+## API surface
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth/register` | Create an account and revocable session |
+| `POST` | `/api/auth/login` | Sign in |
+| `POST` | `/api/auth/logout` | Revoke the session and close its sockets |
+| `GET` | `/api/auth/me` | Return the current account |
+| `GET/POST` | `/api/threads` | Paginate or create owned conversations |
+| `GET/DELETE` | `/api/threads/{id}` | Read or delete an owned conversation |
+| `GET` | `/api/threads/{id}/turns/{client_message_id}` | Recover authoritative turn status |
+| `WS` | `/ws/chat/{thread_id}` | Authenticated durable chat |
+| `WS` | `/ws/demo` | Anonymous ephemeral demo |
+| `GET` | `/health/live` | Process liveness |
+| `GET` | `/health/ready` | Dependency readiness |
+
+In production these routes are mounted below `/aster/` by Caddy.
+
+## Known boundary
+
+Aster demonstrates the architecture and failure handling expected around support actions,
+but its commerce records and handoff tickets are fixtures. Connecting real order, payment,
+or support-desk systems would require provider-specific authorization, consent, delivery
+acknowledgements, retries, reconciliation, and operational ownership. The UI and service
+responses intentionally avoid claiming that those real-world actions occurred.
+
+## Documentation
+
+- [Product definition](PRODUCT.md)
+- [Design system](DESIGN.md)
+- [Backend rollout guide](docs/operations/backend-rollout.md)
+- [Backend remediation status](docs/operations/backend-remediation-status.md)
+- [Production review](docs/reviews/backend-production-review.md)
+- [Functional validation](docs/reviews/functional-validation-2026-10-17.md)

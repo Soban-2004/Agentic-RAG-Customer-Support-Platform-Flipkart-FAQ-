@@ -73,18 +73,20 @@ def _register_unknown_ollama_model(model: str) -> None:
     """
     if not model.startswith("ollama") or litellm.supports_function_calling(model):
         return
-    litellm.register_model({
-        model: {
-            "input_cost_per_token": 0.0,
-            "output_cost_per_token": 0.0,
-            "litellm_provider": model.split("/")[0],
-            "mode": "chat",
-            "max_input_tokens": 131072,
-            "max_output_tokens": 131072,
-            "max_tokens": 131072,
-            "supports_function_calling": True,
+    litellm.register_model(
+        {
+            model: {
+                "input_cost_per_token": 0.0,
+                "output_cost_per_token": 0.0,
+                "litellm_provider": model.split("/")[0],
+                "mode": "chat",
+                "max_input_tokens": 131072,
+                "max_output_tokens": 131072,
+                "max_tokens": 131072,
+                "supports_function_calling": True,
+            }
         }
-    })
+    )
 
 
 def _log_llm_call(kwargs: dict, completion_response: Any, start_time, end_time) -> None:
@@ -104,8 +106,14 @@ def _log_llm_call(kwargs: dict, completion_response: Any, start_time, end_time) 
         logger.exception("gateway: failed to log successful llm call")
 
 
-def _log_llm_failure(kwargs: dict, completion_response: Any, start_time, end_time) -> None:
-    logger.warning("llm_call_failed model=%s error=%s", kwargs.get("model"), completion_response)
+def _log_llm_failure(
+    kwargs: dict, completion_response: Any, start_time, end_time
+) -> None:
+    logger.warning(
+        "llm_call_failed model=%s error=%s",
+        kwargs.get("model"),
+        type(completion_response).__name__,
+    )
 
 
 litellm.success_callback = [_log_llm_call]
@@ -124,30 +132,30 @@ def build_gateway_llm(model_key: Optional[str] = None) -> LiteLLM:
     entry = config["models"][model_key]
     _register_unknown_ollama_model(entry["model"])
 
+    groups = config.get("fallback_groups", {})
+    if model_key not in groups:
+        raise ValueError(f"No explicit generation fallback group for {model_key}")
     fallback_entries = []
-    for key, m in config["models"].items():
-        if key == model_key:
-            continue
+    for key in groups[model_key]:
+        if key in {"prompt_guard", "vision"} or key == model_key:
+            raise ValueError("Invalid model in generation fallback group")
+        m = config["models"][key]
         _register_unknown_ollama_model(m["model"])
-        fallback_entry = {"model": m["model"], "api_key": _resolve_api_key(m)}
+        fallback_entry = {
+            "model": m["model"],
+            "api_key": _resolve_api_key(m),
+            "temperature": m.get("temperature", 0.2),
+            "max_tokens": m.get("max_tokens", 1024),
+        }
         api_base = _resolve_api_base(m)
         if api_base:
             fallback_entry["api_base"] = api_base
+        if m.get("reasoning_effort"):
+            fallback_entry.update(
+                reasoning_effort=m["reasoning_effort"], reasoning_format="hidden"
+            )
         fallback_entries.append(fallback_entry)
 
-    # reasoning_effort (models.yaml, currently just fast/fallback -- both
-    # openai/gpt-oss) is a REQUEST-level kwarg, applied to every call this
-    # LLM object makes regardless of which model in the fallback chain
-    # actually serves it -- there's no per-fallback override in LiteLLM's
-    # fallbacks list. Safe because litellm.drop_params=True (above) silently
-    # drops it for any model/provider that doesn't recognize the param,
-    # rather than erroring -- see that flag's own comment. reasoning_format
-    # is set alongside it, not independently: a reasoning model given a
-    # value it can't honor either 400s (tool-calling with the "raw" default)
-    # or silently burns its whole completion budget on an internal trace and
-    # returns empty content (both verified live -- see models.yaml's fast/
-    # fallback comment) -- "hidden" avoids both without needing the trace
-    # itself for anything downstream.
     additional_kwargs = {
         "timeout": config.get("timeout_seconds", 30),
         "fallbacks": fallback_entries,

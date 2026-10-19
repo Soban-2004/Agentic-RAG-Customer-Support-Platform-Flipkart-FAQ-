@@ -1,8 +1,9 @@
 """
-Evaluation: three independent suites, run as one script. This is the
+Evaluation: four independent suites, run as one script. This is the
 project's real automated test suite -- there is no separate pytest layer,
 these are the assertions that actually matter (retrieval quality, agent
-tool-routing correctness, guardrail effectiveness).
+tool-routing correctness, guardrail effectiveness, intent-classification
+accuracy).
 
 1. RAG suite (RAGAS) -- faithfulness, answer relevancy, context precision,
    context recall over src/eval/data/golden_faq.json, run through the SAME
@@ -16,12 +17,21 @@ tool-routing correctness, guardrail effectiveness).
    output-redaction case, run directly against src/gateway/guardrails.py.
    Checks both that attacks get blocked AND that legitimate questions don't
    (a guardrail that blocks everything scores "safe" but is useless).
+4. Intent-classification suite -- src/eval/data/intent_cases.json, run
+   directly against src/agent/planner.py's classify_intent. Nothing else here
+   tests the planner directly; added specifically because a real production
+   bug (see intent_cases.json's meta_question_previous_message case and
+   src/agent/planner.py's CACHEABLE_INTENTS comment) started with the
+   classifier's output, even though the actual defect turned out to be one
+   layer up in the cache-scoping logic -- this suite is the regression guard
+   for the classification half of that failure mode.
 
 Usage:
-    python src/eval/run_eval.py                  # all three suites
+    python src/eval/run_eval.py                  # all four suites
     python src/eval/run_eval.py --suite rag
     python src/eval/run_eval.py --suite tools
     python src/eval/run_eval.py --suite guardrails
+    python src/eval/run_eval.py --suite intent
 
 Exits non-zero if any suite fails its threshold -- wire into CI as a gate.
 """
@@ -60,20 +70,25 @@ from langfuse import propagate_attributes
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.agent.workflow import AgentStream, ToolCall
 from llama_index.core.memory import Memory
-from llama_index.embeddings.fastembed import FastEmbedEmbedding
+from src.common.embed_factory import build_embed_model, use_cohere_embeddings
+from src.common.knowledge import knowledge_alias, embedding_identity
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 from src.agent.chat_agent import build_agent, build_faq_query_engine
+from src.agent.context import ToolContext, tool_context
+from src.agent.planner import classify_intent
 from src.common.qdrant_factory import get_async_qdrant_client
 from src.gateway.guardrails import GuardrailBlocked, scan_bot_output, scan_user_input
 from src.gateway.llm_gateway import build_gateway_llm
 from src.observability.tracing import init_tracing
 
-logging.basicConfig(level=logging.WARNING)  # per-call gateway logging is noisy at eval volume
+logging.basicConfig(
+    level=logging.WARNING
+)  # per-call gateway logging is noisy at eval volume
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-COLLECTION_NAME = "flipkart_faqs"
+COLLECTION_NAME = knowledge_alias()
 
 # Shared across every trace in one `run_eval.py` invocation -- groups the
 # whole run together in Langfuse (filter by session_id) alongside production
@@ -104,11 +119,27 @@ def _print_section(title: str) -> None:
 
 async def _build_index() -> VectorStoreIndex:
     aclient = get_async_qdrant_client()
+    aliases = await aclient.get_aliases()
+    physical = next(
+        (a.collection_name for a in aliases.aliases if a.alias_name == COLLECTION_NAME),
+        COLLECTION_NAME,
+    )
+    info = await aclient.get_collection(physical)
+    if (getattr(info.config, "metadata", None) or {}).get(
+        "embedding_model"
+    ) != embedding_identity():
+        raise ValueError(
+            "Evaluation requires the same published embedding revision as serving"
+        )
+
     vector_store = QdrantVectorStore(
         aclient=aclient,
-        collection_name=COLLECTION_NAME,
-        enable_hybrid=True,
-        fastembed_sparse_model="Qdrant/bm25",
+        collection_name=physical,
+        **(
+            {"enable_hybrid": True, "fastembed_sparse_model": "Qdrant/bm25"}
+            if not use_cohere_embeddings()
+            else {}
+        ),
     )
     return VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
@@ -132,7 +163,9 @@ async def run_rag_suite(index: VectorStoreIndex) -> dict:
     samples = []
     for i, item in enumerate(golden):
         if i > 0:
-            await asyncio.sleep(1)  # light pacing -- leaves headroom before the heavier RAGAS judge calls below
+            await asyncio.sleep(
+                1
+            )  # light pacing -- leaves headroom before the heavier RAGAS judge calls below
         with propagate_attributes(session_id=EVAL_SESSION_ID, tags=["eval", "rag"]):
             response = await query_engine.aquery(item["question"])
         contexts = [n.get_content() for n in response.source_nodes]
@@ -187,33 +220,49 @@ async def run_rag_suite(index: VectorStoreIndex) -> dict:
 # ----------------------------------------------------------- Tool suite
 async def run_tool_suite(index: VectorStoreIndex) -> list[dict]:
     scenarios = _load_json("tool_scenarios.json")
-    agent = await build_agent(index=index, llm=Settings.llm)
+    agent = await build_agent(
+        index=index,
+        llm=build_gateway_llm(
+            model_key=os.getenv(
+                "AGENT_TOOL_CALL_MODEL_KEY",
+                "fallback" if os.getenv("APP_ENV") == "production" else "tool_call",
+            )
+        ),
+    )
 
     results = []
     for sc in scenarios:
         # In-process only (no async_database_uri) -- a throwaway single-turn
         # memory per scenario, not the SQL-persisted session memory app.py
         # uses; eval runs shouldn't leave rows in data/chat_memory.db.
-        memory = Memory.from_defaults(session_id=f"eval-{uuid.uuid4()}", token_limit=4000)
+        memory = Memory.from_defaults(
+            session_id=f"eval-{uuid.uuid4()}", token_limit=4000
+        )
         tool_calls, full, error = [], "", None
         try:
-            with propagate_attributes(
-                session_id=EVAL_SESSION_ID, tags=["eval", "tools"], metadata={"scenario": sc["name"]}
+            with (
+                tool_context(ToolContext("eval", "eval", str(uuid.uuid4()), demo=True)),
+                propagate_attributes(
+                    session_id=EVAL_SESSION_ID,
+                    tags=["eval", "tools"],
+                    metadata={"scenario": sc["name"]},
+                ),
             ):
-                handler = agent.run(user_msg=sc["message"], memory=memory, max_iterations=6)
+                handler = agent.run(
+                    user_msg=sc["message"], memory=memory, max_iterations=6
+                )
                 async for event in handler.stream_events():
                     if isinstance(event, AgentStream) and event.delta:
                         full += event.delta
                     elif isinstance(event, ToolCall):
                         tool_calls.append(event.tool_name)
                 agent_result = await handler
-                if not full:
-                    full = agent_result.response.content or ""
+                full = agent_result.response.content or full or ""
         except Exception as e:
             error = str(e)
 
         called_tool = tool_calls[0] if tool_calls else None
-        tool_ok = called_tool == sc["expected_tool"]
+        tool_ok = tool_calls == ([sc["expected_tool"]] if sc["expected_tool"] else [])
         content_ok = not sc["expect_contains_any"] or any(
             s.lower() in full.lower() for s in sc["expect_contains_any"]
         )
@@ -276,12 +325,50 @@ async def run_guardrail_suite() -> list[dict]:
     return results
 
 
+# ---------------------------------------------------------- Intent suite
+async def run_intent_suite() -> list[dict]:
+    cases = _load_json("intent_cases.json")
+    results = []
+    for case in cases:
+        try:
+            with propagate_attributes(
+                session_id=EVAL_SESSION_ID,
+                tags=["eval", "intent"],
+                metadata={"case": case["name"]},
+            ):
+                intent = await classify_intent(Settings.llm, case["message"])
+            actual = intent.value
+            error = None
+        except Exception as e:
+            actual, error = None, str(e)
+        results.append(
+            {
+                "name": case["name"],
+                "passed": error is None and actual == case["expected_intent"],
+                "expected_intent": case["expected_intent"],
+                "actual_intent": actual,
+                "error": error,
+            }
+        )
+    return results
+
+
 async def main(suites: list[str]) -> int:
-    Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    Settings.embed_model = build_embed_model()
     Settings.llm = build_gateway_llm()
     init_tracing()
 
-    report: dict = {"run_at": datetime.now().isoformat(), "suites": suites}
+    import hashlib
+
+    report: dict = {
+        "run_at": datetime.now().isoformat(),
+        "suites": suites,
+        "embedding_model": embedding_identity(),
+        "models_config_hash": hashlib.sha256(
+            (Path(__file__).resolve().parents[2] / "config/models.yaml").read_bytes()
+        ).hexdigest(),
+    }
+
     overall_ok = True
 
     if "guardrails" in suites:
@@ -294,9 +381,22 @@ async def main(suites: list[str]) -> int:
         report["guardrails"] = gr_results
         overall_ok &= gr_pass == len(gr_results)
 
+    if "intent" in suites:
+        _print_section("Intent-classification suite")
+        intent_results = await run_intent_suite()
+        for r in intent_results:
+            print(
+                f"  [{'PASS' if r['passed'] else 'FAIL'}] {r['name']} (expected={r['expected_intent']}, got={r['actual_intent']})"
+            )
+        intent_pass = sum(r["passed"] for r in intent_results)
+        print(f"{intent_pass}/{len(intent_results)} passed")
+        report["intent"] = intent_results
+        overall_ok &= intent_pass == len(intent_results)
+
     index = None
     if "rag" in suites or "tools" in suites:
         index = await _build_index()
+        report["knowledge_revision"] = index.vector_store.collection_name
 
     if "rag" in suites:
         _print_section("RAG suite (RAGAS)")
@@ -306,7 +406,9 @@ async def main(suites: list[str]) -> int:
             threshold = RAG_THRESHOLDS[metric]
             passed = value >= threshold
             rag_ok &= passed
-            print(f"  [{'PASS' if passed else 'FAIL'}] {metric}: {value:.3f} (threshold {threshold})")
+            print(
+                f"  [{'PASS' if passed else 'FAIL'}] {metric}: {value:.3f} (threshold {threshold})"
+            )
         report["rag"] = scores
         overall_ok &= rag_ok
 
@@ -314,7 +416,9 @@ async def main(suites: list[str]) -> int:
         _print_section("Tool-calling suite")
         tool_results = await run_tool_suite(index)
         for r in tool_results:
-            print(f"  [{'PASS' if r['passed'] else 'FAIL'}] {r['name']} (tool={r['called_tool']})")
+            print(
+                f"  [{'PASS' if r['passed'] else 'FAIL'}] {r['name']} (tool={r['called_tool']})"
+            )
         tool_pass = sum(r["passed"] for r in tool_results)
         print(f"{tool_pass}/{len(tool_results)} passed")
         report["tools"] = tool_results
@@ -332,7 +436,15 @@ async def main(suites: list[str]) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--suite", choices=["rag", "tools", "guardrails", "all"], default="all")
+    parser.add_argument(
+        "--suite",
+        choices=["rag", "tools", "guardrails", "intent", "all"],
+        default="all",
+    )
     args = parser.parse_args()
-    selected = ["rag", "tools", "guardrails"] if args.suite == "all" else [args.suite]
+    selected = (
+        ["rag", "tools", "guardrails", "intent"]
+        if args.suite == "all"
+        else [args.suite]
+    )
     sys.exit(asyncio.run(main(selected)))

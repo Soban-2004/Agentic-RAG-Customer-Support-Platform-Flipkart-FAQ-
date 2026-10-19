@@ -1,43 +1,50 @@
-"""CLI to create/update login users. Chainlit has no self-serve signup UI, so
-demo/admin users are provisioned here instead -- see src/auth/store.py for
-where these land.
+"""Administrative user provisioning without passwords in process arguments.
 
 Usage:
-    python src/auth/manage_users.py create <username> <password>
-    python src/auth/manage_users.py list
+    python -m src.auth.manage_users create <username>
+    python -m src.auth.manage_users create <username> --password-stdin
+    python -m src.auth.manage_users list
 """
 
 import asyncio
+import getpass
 import os
 import sys
-
 from dotenv import load_dotenv
-
-sys.path.insert(0, os.getcwd())
-
-from src.auth.store import create_user, list_users  # noqa: E402
-
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
+from src.auth.store import create_user, list_users
+from src.common.database import close_pools
 
 
-def main() -> None:
-    if not DATABASE_URL:
-        raise SystemExit("DATABASE_URL is not set in .env")
-
-    if len(sys.argv) == 4 and sys.argv[1] == "create":
-        asyncio.run(create_user(DATABASE_URL, sys.argv[2], sys.argv[3]))
-        print(f"User {sys.argv[2]!r} created/updated.")
-    elif len(sys.argv) == 2 and sys.argv[1] == "list":
-        users = asyncio.run(list_users(DATABASE_URL))
-        if not users:
-            print("(no users yet)")
-        for u in users:
-            print(f"{u['identifier']:20s} created {u['createdAt']}")
-    else:
-        print(__doc__)
-        sys.exit(1)
+async def run():
+    load_dotenv()
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise SystemExit("DATABASE_URL is required")
+    try:
+        if len(sys.argv) in {3, 4} and sys.argv[1] == "create":
+            if len(sys.argv) == 4 and sys.argv[3] != "--password-stdin":
+                raise SystemExit(
+                    "Do not pass passwords in arguments; use the prompt or --password-stdin"
+                )
+            password = (
+                sys.stdin.readline().rstrip("\r\n")
+                if len(sys.argv) == 4
+                else getpass.getpass("Password: ")
+            )
+            if not 8 <= len(password) <= 128:
+                raise SystemExit("Password must contain 8–128 characters")
+            await create_user(url, sys.argv[2], password)
+            print(
+                "User updated; existing sessions revoked if the account already existed."
+            )
+        elif len(sys.argv) == 2 and sys.argv[1] == "list":
+            for user in await list_users(url):
+                print(user["identifier"], user["createdAt"])
+        else:
+            raise SystemExit(__doc__)
+    finally:
+        await close_pools()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(run())

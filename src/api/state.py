@@ -14,3 +14,6 @@ from src.gateway.cache import SemanticCache
 
 agent: Optional[FunctionAgent] = None
 cache: Optional[SemanticCache] = None
+
+faq_engine = None
+knowledge_version = None

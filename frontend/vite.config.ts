@@ -7,6 +7,9 @@ import tailwindcss from '@tailwindcss/vite'
 // cookie handling to reason about at all. In prod, FastAPI serves this app's
 // built output directly (see main.py), so the proxy is dev-only.
 export default defineConfig({
+  // VITE_BASE_PATH lets the production image live below a shared host path
+  // while local development keeps the usual root URL.
+  base: process.env.VITE_BASE_PATH || '/',
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {

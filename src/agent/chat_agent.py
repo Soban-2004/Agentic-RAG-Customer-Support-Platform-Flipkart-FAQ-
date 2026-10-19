@@ -13,9 +13,7 @@ would talk to a real external tool server.
 
 import contextvars
 import os
-import sys
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from llama_index.core import PromptTemplate, VectorStoreIndex
 from llama_index.core.agent.workflow import FunctionAgent
@@ -24,11 +22,8 @@ from llama_index.core.llms import LLM
 from llama_index.core.schema import QueryBundle
 from llama_index.core.tools import FunctionTool, QueryEngineTool
 from llama_index.core.tools.types import ToolOutput
-from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
 
 from src.common.embed_factory import use_cohere_embeddings
-
-MCP_SERVER_PATH = Path(__file__).resolve().parent.parent / "tools" / "mcp_server.py"
 
 # Two-stage retrieval: cast a wide net with hybrid (dense + BM25 sparse) search,
 # then rerank down to the few chunks actually worth putting in the prompt. The
@@ -80,9 +75,9 @@ FAQ_QA_TEMPLATE = PromptTemplate(
 # no error) -- the exact-match gate exists specifically to make that
 # impossible, at the cost of only saving the round-trip on the common case
 # where the agent passes the question through unchanged.
-_precomputed_query_embedding: contextvars.ContextVar[Optional[tuple[str, list[float]]]] = (
-    contextvars.ContextVar("precomputed_query_embedding", default=None)
-)
+_precomputed_query_embedding: contextvars.ContextVar[
+    tuple[str, list[float]] | None
+] = contextvars.ContextVar("precomputed_query_embedding", default=None)
 
 
 def set_precomputed_query_embedding(query: str, embedding: list[float]) -> None:
@@ -100,6 +95,9 @@ class _CachedQueryEngineTool(QueryEngineTool):
     a fresh, correctness-safe re-embed."""
 
     async def acall(self, *args: Any, **kwargs: Any) -> ToolOutput:
+        from src.agent.context import current_context
+
+        current_context().tool_calls.append("search_faq")
         query_str = self._get_query_str(*args, **kwargs)
         cached = _precomputed_query_embedding.get()
         query_input = (
@@ -108,8 +106,13 @@ class _CachedQueryEngineTool(QueryEngineTool):
             else query_str
         )
         response = await self._query_engine.aquery(query_input)
+        from src.agent.context import current_context
+        from src.agent.evidence import grounded_text
+
+        text, sources = grounded_text(response)
+        current_context().sources.extend(sources)
         return ToolOutput(
-            content=str(response),
+            content=text,
             tool_name=self.metadata.get_name(),
             raw_input={"input": query_str},
             raw_output=response,
@@ -121,7 +124,9 @@ def _build_reranker():
         from llama_index.postprocessor.cohere_rerank import CohereRerank
 
         return CohereRerank(
-            api_key=os.getenv("COHERE_API_KEY"), model="rerank-english-v3.0", top_n=RERANK_TOP_N
+            api_key=os.getenv("COHERE_API_KEY"),
+            model="rerank-english-v3.0",
+            top_n=RERANK_TOP_N,
         )
     from llama_index.core.postprocessor import SentenceTransformerRerank
 
@@ -142,12 +147,14 @@ def build_faq_query_engine(index: VectorStoreIndex) -> BaseQueryEngine:
         **query_kwargs,
     )
 
+
 SYSTEM_PROMPT = (
     "You are a helpful Flipkart customer support assistant. Judge each tool call "
     "strictly by the user's CURRENT message -- ignore what tools were called earlier "
     "in the conversation; a new message is a new decision.\n\n"
     "Tool rules:\n"
-    "- search_faq: for policy/how-to questions (returns, refunds policy, payments, EMI, "
+    "- search_faq: for policy/how-to questions (returns, refunds policy, payments, "
+    "EMI, "
     "shipping, etc). Call it at most once per question. As soon as you get results, "
     "answer directly from them -- do not call any other tool afterward.\n"
     "- get_order_status: ONLY if the current message explicitly asks about the status "
@@ -159,13 +166,23 @@ SYSTEM_PROMPT = (
     "complaint, a special request) -- NOT for a plain status question. Summarize it in "
     "one short sentence for the `note` argument. Do not call this at the same time as "
     "get_order_status; pick whichever one the message is actually asking for.\n"
-    "- escalate_to_human: ONLY if the current message explicitly asks to speak to a "
-    "human/agent, or clearly demands escalation. Summarize the issue in one sentence "
-    "for the `summary` argument.\n"
+    "- escalate_to_human: ONLY if the current message explicitly asks to speak to, "
+    "connect to, or notify a human/agent. Anger or frustration alone is not consent "
+    "to create a handoff. Summarize the issue in one sentence for the `summary` "
+    "argument.\n"
     "- If a question needs an order/refund ID that wasn't given, ask the user for it "
     "instead of calling a tool.\n"
-    "- Greetings, small talk, or anything not matching the above: answer directly, "
-    "call NO tool at all.\n\n"
+    "- If the user supplied a candidate order/refund ID, call the matching status "
+    "tool even if the ID is unfamiliar. Do not guess whether it exists or ask for "
+    "the ID again; the tool validates it and reports missing records.\n"
+    "- If a message requests two or more distinct account actions, call no tool and "
+    "ask the user to send one action at a time.\n"
+    "- Never answer sports, news, weather, politics, general knowledge, coding, "
+    "homework, maths, medical/legal/financial advice, recipes, creative writing, or "
+    "questions about other companies. If one reaches this agent, say you can only "
+    "help with shopping and customer support, and call no tool.\n"
+    "- For greetings or thanks, briefly state what customer-support topics you can "
+    "help with and call no tool.\n\n"
     "Never call more than one tool for a single message. Keep answers under 200 words. "
     "Provide step-by-step guidance when relevant.\n\n"
     "Formatting: always answer in clean Markdown. Use **bold** for key terms, "
@@ -175,58 +192,26 @@ SYSTEM_PROMPT = (
 )
 
 
-def _extract_mcp_text(result: Any) -> str:
-    """MCP tool calls return a CallToolResult (content=[TextContent(...), ...]) rather
-    than a plain string -- pull the text out so it isn't shown to the user as a raw
-    Python repr of the result object."""
-    content = getattr(result, "content", None)
-    if content:
-        texts = [block.text for block in content if hasattr(block, "text")]
-        if texts:
-            return "\n".join(texts)
-    return str(result)
-
-
-def _wrap_mcp_tool(tool: FunctionTool) -> FunctionTool:
-    """Rebuild an MCP-derived FunctionTool so its output is clean text and it's
-    return_direct (consistent with every other tool here -- see build_agent)."""
-    original_async_fn = tool.async_fn
-
-    async def wrapped(**kwargs: Any) -> str:
-        raw = await original_async_fn(**kwargs)
-        return _extract_mcp_text(raw)
-
-    return FunctionTool.from_defaults(
-        async_fn=wrapped,
-        name=tool.metadata.name,
-        description=tool.metadata.description,
-        fn_schema=tool.metadata.fn_schema,
-        return_direct=True,
-    )
-
-
 async def _load_mcp_tools() -> list[FunctionTool]:
-    # Launched as a subprocess over stdio (see MCP_SERVER_PATH) -- uses sys.executable
-    # so it runs with this venv's interpreter/dependencies, not whatever "python" is
-    # first on PATH. Each tool call opens a fresh subprocess+session under the hood
-    # (llama-index-tools-mcp's BasicMCPClient design); fine for a demo's call volume,
-    # but a persistent session or an HTTP-based MCP server would avoid that overhead
-    # in a higher-throughput deployment.
-    client = BasicMCPClient(sys.executable, args=[str(MCP_SERVER_PATH)])
-    spec = McpToolSpec(
-        client=client,
-        allowed_tools=[
-            "get_order_status",
-            "get_refund_status",
-            "add_order_note",
-            "escalate_to_human",
-        ],
-    )
-    tools = await spec.to_tool_list_async()
-    return [_wrap_mcp_tool(t) for t in tools]
+    # Execution identity lives in a trusted ContextVar, never in LLM arguments.
+    # The standalone MCP adapter is a read-only fixture inspector. A real remote
+    # connector must implement this same actor-scoped service boundary.
+    from src.tools import service
+
+    return [
+        FunctionTool.from_defaults(async_fn=fn, return_direct=True)
+        for fn in (
+            service.get_order_status,
+            service.get_refund_status,
+            service.add_order_note,
+            service.escalate_to_human,
+        )
+    ]
 
 
-async def build_agent(index: VectorStoreIndex, llm: LLM) -> FunctionAgent:
+async def build_agent(
+    index: VectorStoreIndex, llm: LLM, query_engine=None
+) -> FunctionAgent:
     # return_direct=True on every tool here, including search_faq: the query
     # engine already synthesizes a coherent answer from the retrieved FAQ
     # chunks (its default response_mode does its own LLM call over the
@@ -236,12 +221,13 @@ async def build_agent(index: VectorStoreIndex, llm: LLM) -> FunctionAgent:
     # call search_faq repeatedly (each extra round-trip is another chance to
     # hit Groq's occasional malformed-tool-call quirk and retry/re-decide).
     search_faq_tool = _CachedQueryEngineTool.from_defaults(
-        query_engine=build_faq_query_engine(index),
+        query_engine=query_engine or build_faq_query_engine(index),
         name="search_faq",
         description=(
             "Search Flipkart's FAQ knowledge base for policy and how-to questions "
             "(returns, refunds, payments, EMI, shipping, etc). Call this AT MOST ONCE "
-            "per user question, with one consolidated query covering everything asked -- "
+            "per user question, with one consolidated query covering everything "
+            "asked -- "
             "it returns a complete synthesized answer in a single call, so there is no "
             "need to call it again for sub-aspects of the same question."
         ),

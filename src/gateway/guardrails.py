@@ -35,7 +35,9 @@ import yaml
 
 logger = logging.getLogger("gateway.guardrails")
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "models.yaml")
+_CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "config", "models.yaml"
+)
 
 # Fast deterministic pre-check, layered ahead of the ML check below. Found via
 # the red-team eval suite (src/eval/data/redteam.json): a soft zero-shot
@@ -43,7 +45,9 @@ _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "mo
 # in the same noisy range as ordinary customer-support text -- a short,
 # unambiguous keyword list sidesteps that entirely for the clearest cases.
 _DANGEROUS_KEYWORDS = ["explosive", "bomb", "detonat", "molotov"]
-_DANGEROUS_PATTERN = re.compile(r"\b(" + "|".join(_DANGEROUS_KEYWORDS) + r")\w*\b", re.IGNORECASE)
+_DANGEROUS_PATTERN = re.compile(
+    r"\b(" + "|".join(_DANGEROUS_KEYWORDS) + r")\w*\b", re.IGNORECASE
+)
 
 # Character-count proxy for LLM Guard's old token-based TokenLimit -- avoids
 # pulling in a tokenizer just for a length guard. ~4 chars/token is the same
@@ -78,11 +82,18 @@ async def _check_prompt_injection(text: str) -> float:
             model=entry["model"],
             messages=[{"role": "user", "content": text}],
             api_key=os.getenv(entry["api_key_env"]),
+            timeout=8,
+            num_retries=0,
         )
-        return float(response.choices[0].message.content)
+        import math
+
+        risk = float(response.choices[0].message.content)
+        if not math.isfinite(risk) or not 0 <= risk <= 1:
+            raise ValueError("Invalid guard verdict")
+        return risk
     except Exception:
-        logger.exception("guardrails: prompt-injection check failed, failing open")
-        return 0.0
+        logger.warning("guardrails: prompt checker unavailable; refusing execution")
+        raise GuardrailBlocked("GuardUnavailable", 1.0)
 
 
 class GuardrailBlocked(Exception):
@@ -91,7 +102,9 @@ class GuardrailBlocked(Exception):
     def __init__(self, scanner: str, risk_score: float):
         self.scanner = scanner
         self.risk_score = risk_score
-        super().__init__(f"Blocked by input scanner '{scanner}' (risk={risk_score:.2f})")
+        super().__init__(
+            f"Blocked by input scanner '{scanner}' (risk={risk_score:.2f})"
+        )
 
 
 async def scan_user_input(text: str) -> str:
@@ -104,19 +117,23 @@ async def scan_user_input(text: str) -> str:
     if keyword_hit:
         logger.warning(
             "guardrail_triggered layer=input scanner=KeywordDenylist term=%r text=%r",
-            keyword_hit, text[:120],
+            keyword_hit,
+            "[redacted]",
         )
         raise GuardrailBlocked("KeywordDenylist", 1.0)
 
     if len(text) > _MAX_INPUT_CHARS:
-        logger.warning("guardrail_triggered layer=input scanner=TokenLimit len=%d", len(text))
+        logger.warning(
+            "guardrail_triggered layer=input scanner=TokenLimit len=%d", len(text)
+        )
         raise GuardrailBlocked("TokenLimit", 1.0)
 
     score = await _check_prompt_injection(text)
     if score > _PROMPT_INJECTION_THRESHOLD:
         logger.warning(
             "guardrail_triggered layer=input scanner=PromptInjection score=%.4f text=%r",
-            score, text[:120],
+            score,
+            "[redacted]",
         )
         raise GuardrailBlocked("PromptInjection", score)
 
@@ -130,4 +147,32 @@ async def scan_bot_output(prompt: str, text: str) -> tuple[str, Optional[str]]:
     always passes through unchanged -- see module docstring for why there's
     no output scanning right now.
     """
-    return text, None
+    from urllib.parse import urlsplit
+
+    flagged = False
+
+    def safe_url(match):
+        nonlocal flagged
+        if urlsplit(match.group(0).rstrip(".,)>")).hostname not in {
+            "flipkart.com",
+            "www.flipkart.com",
+        }:
+            flagged = True
+            return "[external link removed]"
+        return match.group(0)
+
+    text = re.sub(r"https?://[^\s]+", safe_url, text)
+    cleaned = re.sub(
+        r"\b(?:gsk_|sk-)[a-zA-Z0-9_-]{16,}\b", "[credential removed]", text
+    )
+    flagged = flagged or cleaned != text
+    text = re.sub(r"(?<!\d)(?:\d[ -]?){16}(?!\d)", "[number redacted]", cleaned)
+    flagged = flagged or text != cleaned
+    cleaned = re.sub(
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "[email redacted]", text
+    )
+    cleaned = re.sub(
+        r"(?<![A-Za-z0-9])(?:\+91[- ]?)?[6-9]\d{9}(?!\d)", "[phone redacted]", cleaned
+    )
+    flagged = flagged or cleaned != text
+    return cleaned, "OutputPolicy" if flagged else None

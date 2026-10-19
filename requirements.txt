@@ -8,16 +8,16 @@
 # "is this optional package installed" detection). This file is what the
 # Dockerfile actually builds from, so a deployed container physically cannot
 # import them, not just "shouldn't."
-python-dotenv
+python-dotenv==1.2.2
 qdrant-client==1.16.0
-llama-index-core
-llama-index-readers-file
-llama-index-vector-stores-qdrant
-llama-index-llms-litellm
-fastapi
-uvicorn[standard]
-pyjwt
-anyio
+llama-index-core==0.14.23
+llama-index-readers-file==0.6.0
+llama-index-vector-stores-qdrant==0.10.2
+llama-index-llms-litellm==0.7.1
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+pyjwt==2.13.0
+anyio==4.14.2
 # Pinned -- unpinned resolved to 1.98.0 on a fresh Render build, which crashes
 # on import (ImportError: cannot import name 'NotRequired' from 'typing') on
 # this image's Python 3.10: litellm's context_management/editors/compact.py
@@ -25,7 +25,7 @@ anyio
 # 3.11+. 1.91.4 is what's been running clean in local dev throughout this
 # whole project, so it's the known-good version, not an arbitrary rollback.
 litellm==1.91.4
-pyyaml
+pyyaml==6.0.3
 # Pinned -- unpinned resolved to 2.1.0 on a fresh Render build, a breaking
 # major version that restructured/dropped mcp.server.fastmcp: src/tools/mcp_server.py
 # imports FastMCP straight from there, so the MCP stdio subprocess (spawned
@@ -34,12 +34,13 @@ pyyaml
 # (surfaced up top as "mcp.shared.exceptions.MCPError: Connection closed").
 # 1.28.1 is what local dev has been running the whole project.
 mcp==1.28.1
-llama-index-tools-mcp
-llama-index-postprocessor-cohere-rerank
-llama-index-embeddings-cohere
-sqlalchemy
-asyncpg
-bcrypt
-ragas
-langfuse
-openinference-instrumentation-llama-index
+llama-index-tools-mcp==0.4.8
+llama-index-postprocessor-cohere-rerank==0.9.0
+llama-index-embeddings-cohere==0.8.0
+sqlalchemy==2.0.51
+asyncpg==0.31.0
+bcrypt==5.0.0
+argon2-cffi==25.1.0
+Pillow==12.3.0
+langfuse==4.14.1
+openinference-instrumentation-llama-index==4.4.3

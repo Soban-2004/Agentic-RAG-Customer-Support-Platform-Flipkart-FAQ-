@@ -1,0 +1,105 @@
+name: aster
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  image: aster-app:production
+  build:
+    context: ..
+    args:
+      VITE_BASE_PATH: /aster/
+  env_file:
+    - production.env
+  networks:
+    - private
+  logging: *default-logging
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - production.env
+    environment:
+      POSTGRES_DB: aster
+      POSTGRES_USER: aster
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aster -d aster"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  qdrant:
+    image: qdrant/qdrant:v1.16.1
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "</dev/tcp/127.0.0.1/6333"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: *default-logging
+
+  migrate:
+    <<: *app
+    profiles: ["init"]
+    command: ["python", "-m", "src.persistence.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  knowledge:
+    <<: *app
+    profiles: ["init"]
+    command: ["python", "-m", "src.ingestion.embed_qdrant"]
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    <<: *app
+    restart: unless-stopped
+    networks:
+      private:
+      shared-gateway:
+        aliases:
+          - aster-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+    logging: *default-logging
+
+networks:
+  private:
+    name: aster-private
+  shared-gateway:
+    external: true
+    name: shared-gateway
+
+volumes:
+  postgres-data:
+    name: aster-postgres-data
+  qdrant-data:
+    name: aster-qdrant-data

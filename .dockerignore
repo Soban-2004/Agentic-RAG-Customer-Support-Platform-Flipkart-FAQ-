@@ -1,4 +1,15 @@
 # Ignore virtual environments
+.env
+.env.*
+!.env.example
+deploy/*.env
+*.pem
+*.key
+.impeccable/
+.claude/
+docs/reviews/
+tests/
+frontend/src/assets/vite.svg
 venv/
 .venv/
 
@@ -8,6 +19,8 @@ __pycache__/
 
 # Ignore local data
 data/
+!data/dataset/
+!data/dataset/**
 datasets/
 downloads/
 cache/

@@ -38,12 +38,9 @@ def get_order_status(order_id: str) -> str:
     if not order:
         return f"No order found with ID '{order_id}'. Please double-check the order ID."
     result = (
-        f"Order {order['order_id']} ({order['item_name']}): status = {order['status']}, "
+        f"Demonstration order {order['order_id']} ({order['item_name']}): status = {order['status']}, "
         f"expected delivery = {order['eta']}."
     )
-    notes = get_notes(order_id)
-    if notes:
-        result += " Notes from previous conversations about this order: " + " | ".join(notes)
     return result
 
 
@@ -52,9 +49,11 @@ def get_refund_status(refund_id: str) -> str:
     """Look up the status of a specific refund by its refund ID."""
     refund = get_refund(refund_id)
     if not refund:
-        return f"No refund found with ID '{refund_id}'. Please double-check the refund ID."
+        return (
+            f"No refund found with ID '{refund_id}'. Please double-check the refund ID."
+        )
     return (
-        f"Refund {refund['refund_id']} for order {refund['order_id']}: "
+        f"Demonstration refund {refund['refund_id']} for order {refund['order_id']}: "
         f"status = {refund['status']}, amount = Rs.{refund['amount']:.2f}."
     )
 
@@ -68,8 +67,7 @@ def add_order_note(order_id: str, note: str) -> str:
     for the same order -- this is how the assistant remembers context about an
     order across separate conversations.
     """
-    add_note(order_id=order_id, note=note)
-    return f"Noted for order {order_id.strip().upper()}: {note}"
+    return "Standalone MCP mutations are disabled. Use the authenticated application service."
 
 
 @mcp.tool()
@@ -79,11 +77,7 @@ def escalate_to_human(summary: str, order_id: str = "") -> str:
     `summary` should briefly describe the customer's issue. `order_id` is
     optional -- include it if the escalation relates to a specific order.
     """
-    ticket = create_escalation(summary=summary, order_id=order_id or None)
-    return (
-        f"Escalation ticket {ticket['ticket_id']} created -- a human support agent "
-        f"will follow up on this shortly."
-    )
+    return "Simulation only: no live support desk is connected. Standalone MCP mutations are disabled."
 
 
 if __name__ == "__main__":

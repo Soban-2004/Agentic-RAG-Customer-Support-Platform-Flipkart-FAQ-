@@ -98,3 +98,9 @@ models:
   vision:
     model: groq/meta-llama/llama-4-scout-17b-16e-instruct
     api_key_env: CHATGROQ_API_KEY
+
+# Only models validated for the same task may participate in fallbacks.
+fallback_groups:
+  fast: [fallback]
+  fallback: [fast]
+  tool_call: [fallback]

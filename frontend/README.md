@@ -1,32 +1,29 @@
-# React + TypeScript + Vite
+﻿# Aster frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A cinematic customer-support interface built with React, TypeScript, Vite, Tailwind CSS, and Framer Motion.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+From this directory:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The Vite server proxies `/api` and `/ws` to the FastAPI backend on port 8000. Without the backend, chat displays an offline state; login and registration require the backend too.
+
+## Checks
+
+```powershell
+npm run build
+npm run lint
+```
+
+## Design
+
+The UI has an independent Aster identity. Flipkart remains the subject of the assistant's policies and demonstration orders. See `../DESIGN.md` for the palette, typography, layout, and motion rules, and `../PRODUCT.md` for product constraints.
+
+Dark is the initial theme for new visitors. Explicit light, dark, and system choices are saved locally. CSS motion and Framer Motion respect reduced-motion preferences.
+
+Browser review images live in `../.impeccable/review/`. Conversation preview images contain explicitly labeled test responses and do not establish backend correctness.

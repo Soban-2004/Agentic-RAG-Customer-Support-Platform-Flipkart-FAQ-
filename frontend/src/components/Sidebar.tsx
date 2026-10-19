@@ -1,49 +1,11 @@
-import { motion } from "framer-motion"
-import { LogOut, Monitor, Moon, PanelLeftClose, Plus, Sun, Trash2 } from "lucide-react"
+import { useEffect, useRef } from "react"
+import { LogOut, PanelLeftClose, Plus, Trash2, MessageSquare } from "lucide-react"
 import type { ThreadSummary } from "../api/client"
 import { useAuth } from "../hooks/useAuth"
-import { useTheme, type Theme } from "../hooks/useTheme"
-import { EASE_UI } from "../lib/motion"
+import { Brand } from "./Brand"
+import { ThemeSwitch } from "./ThemeSwitch"
 
-const SIDEBAR_WIDTH = 260
-
-const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-]
-
-function ThemeSwitch() {
-  const { theme, setTheme } = useTheme()
-  return (
-    <div className="flex items-center gap-1 rounded-lg bg-muted-surface p-1">
-      {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
-        <button
-          key={value}
-          type="button"
-          onClick={() => setTheme(value)}
-          aria-label={`${label} theme`}
-          title={`${label} theme`}
-          className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-            theme === value ? "bg-surface text-brand elevate-sm" : "text-muted hover:text-ink"
-          }`}
-        >
-          <Icon size={14} />
-        </button>
-      ))}
-    </div>
-  )
-}
-
-export function Sidebar({
-  threads,
-  activeThreadId,
-  open,
-  onSelect,
-  onNewChat,
-  onDelete,
-  onToggle,
-}: {
+export function Sidebar({ threads, activeThreadId, open, onSelect, onNewChat, onDelete, onToggle }: {
   threads: ThreadSummary[]
   activeThreadId: string | null
   open: boolean
@@ -53,75 +15,45 @@ export function Sidebar({
   onToggle: () => void
 }) {
   const { user, logout } = useAuth()
-
-  function handleDelete(e: React.MouseEvent, id: string, title: string | null) {
-    e.stopPropagation()
-    if (window.confirm(`Delete "${title || "New chat"}"? This can't be undone.`)) {
-      onDelete(id)
+  const asideRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!open || !window.matchMedia("(max-width: 767px)").matches) return
+    const previous = document.activeElement as HTMLElement | null
+    asideRef.current?.querySelector<HTMLButtonElement>("button")?.focus()
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onToggle()
+      if (event.key !== "Tab") return
+      const elements = asideRef.current?.querySelectorAll<HTMLElement>("button, a[href]")
+      if (!elements?.length) return
+      const first = elements[0]
+      const last = elements[elements.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
     }
-  }
-
+    document.addEventListener("keydown", handleKey)
+    return () => { document.removeEventListener("keydown", handleKey); previous?.focus() }
+  }, [open, onToggle])
+  if (!open) return null
   return (
-    <motion.aside
-      className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface"
-      initial={false}
-      animate={{ width: open ? SIDEBAR_WIDTH : 0 }}
-      transition={{ duration: 0.25, ease: EASE_UI }}
-    >
-      <div style={{ width: SIDEBAR_WIDTH }} className="flex h-full flex-col">
-        <div className="flex items-center gap-2 p-3">
-          <button
-            type="button"
-            onClick={onNewChat}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-sm font-medium text-ink transition-colors hover:bg-brand-soft hover:text-brand"
-          >
-            <Plus size={15} /> New chat
-          </button>
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label="Close sidebar"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-hover hover:text-ink"
-          >
-            <PanelLeftClose size={17} />
-          </button>
+    <>
+      <button className="sidebar-backdrop" type="button" onClick={onToggle} aria-label="Close navigation" tabIndex={-1} />
+      <aside className="sidebar" ref={asideRef} aria-label="Conversation navigation">
+        <div className="sidebar-content">
+          <div className="sidebar-top"><Brand /><button className="sidebar-close" type="button" onClick={onToggle} aria-label="Close sidebar"><PanelLeftClose size={18} /></button></div>
+          <button className="sidebar-new" type="button" onClick={onNewChat}><Plus size={17} /> New conversation</button>
+          <nav className="sidebar-history" aria-label="Chat history">
+            <p className="history-label">Your conversations</p>
+            {threads.map((thread) => (
+              <div key={thread.id} className={`thread-row ${thread.id === activeThreadId ? "is-active" : ""}`}>
+                <button className="thread-title" type="button" onClick={() => onSelect(thread.id)} aria-current={thread.id === activeThreadId ? "page" : undefined}><MessageSquare size={15} /><span>{thread.title || "New conversation"}</span></button>
+                <button className="thread-delete" type="button" aria-label={`Delete ${thread.title || "conversation"}`} onClick={() => { if (window.confirm(`Delete "${thread.title || "New conversation"}"? This can't be undone.`)) onDelete(thread.id) }}><Trash2 size={14} /></button>
+              </div>
+            ))}
+            {threads.length === 0 && <p className="sidebar-empty">Your saved conversations will appear here.</p>}
+          </nav>
+          <div className="sidebar-footer"><ThemeSwitch /><div className="sidebar-account"><span title={user?.identifier}>{user?.identifier}</span><button type="button" onClick={() => logout()} aria-label="Log out"><LogOut size={16} /></button></div></div>
         </div>
-
-        <div className="flex-1 overflow-y-auto px-2">
-          {threads.map((t) => (
-            <div
-              key={t.id}
-              onClick={() => onSelect(t.id)}
-              className={`group flex cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm mb-1 transition-colors ${
-                t.id === activeThreadId ? "bg-brand-soft text-brand" : "text-ink/80 hover:bg-hover"
-              }`}
-            >
-              <span className="truncate">{t.title || "New chat"}</span>
-              <button
-                type="button"
-                onClick={(e) => handleDelete(e, t.id, t.title)}
-                aria-label="Delete chat"
-                className="ml-2 shrink-0 rounded p-1 text-muted opacity-0 transition-opacity hover:bg-hover hover:text-danger group-hover:opacity-100"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-          {threads.length === 0 && <p className="px-3 py-2 text-sm text-muted">No chats yet</p>}
-        </div>
-
-        <div className="flex items-center justify-between gap-2 border-t border-border p-3">
-          <ThemeSwitch />
-          <button
-            type="button"
-            onClick={() => logout()}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-muted-surface px-2.5 py-1.5 text-xs font-medium text-ink/70 transition-colors hover:bg-danger-soft hover:text-danger"
-          >
-            <LogOut size={13} /> Log out
-          </button>
-        </div>
-        <div className="border-t border-border px-3 py-2 text-xs text-muted">{user?.identifier}</div>
-      </div>
-    </motion.aside>
+      </aside>
+    </>
   )
 }

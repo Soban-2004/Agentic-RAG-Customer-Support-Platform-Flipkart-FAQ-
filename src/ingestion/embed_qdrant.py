@@ -16,6 +16,7 @@ import os
 import logging
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -37,7 +38,8 @@ from llama_index.core import (
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
-from src.common.embed_factory import build_embed_model
+from src.common.embed_factory import build_embed_model, use_cohere_embeddings
+from src.common.knowledge import publish, embedding_identity
 from src.common.qdrant_factory import get_sync_qdrant_client, is_remote
 
 # Setup logging to see progress
@@ -70,7 +72,7 @@ def main() -> None:
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Drop and recreate the collection first, instead of incremental upsert.",
+        help="Compatibility flag: releases are always full immutable snapshots; no live collection is deleted.",
     )
     args = parser.parse_args()
 
@@ -87,10 +89,6 @@ def main() -> None:
     # src/common/qdrant_factory.py for details.
     print(f"Connecting to Qdrant ({'remote' if is_remote() else 'local embedded'})...")
     client = get_sync_qdrant_client(timeout=60)
-
-    if args.reset and client.collection_exists(COLLECTION_NAME):
-        print(f"--reset passed: deleting existing collection '{COLLECTION_NAME}'...")
-        client.delete_collection(COLLECTION_NAME)
 
     print("Loading documents...")
     DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "dataset"
@@ -111,7 +109,9 @@ def main() -> None:
 
     nodes = Settings.text_splitter.get_nodes_from_documents(documents)
     for node in nodes:
-        node.id_ = _deterministic_id(node.get_content())
+        source = str(node.metadata.get("file_name", "policy"))
+        node.metadata["source_id"] = _deterministic_id(source)
+        node.id_ = _deterministic_id(source + ":" + node.get_content())
     content_hash = hashlib.sha256(
         "".join(sorted(n.id_ for n in nodes)).encode()
     ).hexdigest()[:12]
@@ -120,13 +120,27 @@ def main() -> None:
     # QdrantVectorStore manages collection creation itself when hybrid is enabled --
     # it needs named dense + sparse vectors, a schema the old manual
     # client.create_collection() call (dense-only) didn't set up.
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=COLLECTION_NAME,
-        enable_hybrid=True,
-        fastembed_sparse_model=SPARSE_MODEL,
-        batch_size=64,
+    # Full immutable snapshot: withdrawn chunks cannot survive in the next release.
+    revision = (
+        COLLECTION_NAME
+        + "_"
+        + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        + "_"
+        + content_hash
     )
+    for node in nodes:
+        node.metadata["knowledge_version"] = revision
+        node.metadata["embedding_model"] = embedding_identity()
+        node.excluded_embed_metadata_keys.extend(
+            ["knowledge_version", "embedding_model", "source_id", "file_path"]
+        )
+        node.excluded_llm_metadata_keys.extend(
+            ["knowledge_version", "embedding_model", "source_id", "file_path"]
+        )
+    kwargs = dict(client=client, collection_name=revision, batch_size=64)
+    if not use_cohere_embeddings():
+        kwargs.update(enable_hybrid=True, fastembed_sparse_model=SPARSE_MODEL)
+    vector_store = QdrantVectorStore(**kwargs)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
     print("Generating dense + sparse embeddings and upserting to Qdrant...")
@@ -136,7 +150,22 @@ def main() -> None:
         show_progress=True,
     )
 
-    print("Indexing complete! Collection ready.")
+    count = client.count(revision, exact=True).count
+    if count != len({node.id_ for node in nodes}):
+        raise RuntimeError(
+            "Staging collection count does not match the source manifest; not publishing"
+        )
+    from qdrant_client.http import models
+
+    client.update_collection(
+        revision,
+        metadata={"embedding_model": embedding_identity(), "fingerprint": content_hash},
+    )
+    publish(client, revision)
+    client.close()
+    print(
+        f"Published knowledge revision {revision}. Restart serving processes to adopt it; prior collections remain available for rollback."
+    )
 
 
 if __name__ == "__main__":

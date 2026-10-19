@@ -30,6 +30,9 @@ def init_tracing() -> Optional[Langfuse]:
     if _client is not None:
         return _client
 
+    # Content instrumentation is opt-in; provider traces may include full prompts.
+    if os.getenv("ENABLE_CONTENT_TRACING", "false").lower() != "true":
+        return None
     public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
     secret_key = os.getenv("LANGFUSE_SECRET_KEY")
     if not public_key or not secret_key:
@@ -70,7 +73,10 @@ def score_guardrail_event(layer: str, scanner: str) -> None:
         return
     try:
         _client.score_current_trace(
-            name=f"guardrail_triggered_{layer}", value=1, data_type="BOOLEAN", comment=scanner
+            name=f"guardrail_triggered_{layer}",
+            value=1,
+            data_type="BOOLEAN",
+            comment=scanner,
         )
     except Exception:
         logger.exception("observability: failed to score guardrail event")
@@ -83,6 +89,28 @@ def score_cache_result(hit: bool) -> None:
     if _client is None:
         return
     try:
-        _client.score_current_trace(name="cache_hit", value=1 if hit else 0, data_type="BOOLEAN")
+        _client.score_current_trace(
+            name="cache_hit", value=1 if hit else 0, data_type="BOOLEAN"
+        )
     except Exception:
         logger.exception("observability: failed to score cache result")
+
+
+def score_resolution_path(path: str) -> None:
+    """Call once per turn with a label for how it was actually resolved --
+    "guardrail_blocked", "cache_hit", "tool:search_faq", "tool:get_order_status",
+    "plain_chat", "error", etc (see chat_ws.py's _run_turn). A queryable,
+    trace-level tag for the agent-trajectory half of observability that
+    score_cache_result/score_guardrail_event don't cover: not just whether
+    the cache/guardrail fired, but which of several possible paths a given
+    turn actually took -- lets a Langfuse dashboard answer "what fraction of
+    turns hit a tool vs. the cache vs. plain chat" without having to eyeball
+    individual traces."""
+    if _client is None:
+        return
+    try:
+        _client.score_current_trace(
+            name="resolution_path", value=path, data_type="CATEGORICAL"
+        )
+    except Exception:
+        logger.exception("observability: failed to score resolution path")

@@ -7,3 +7,5 @@
 llama-index-embeddings-fastembed
 fastembed
 sentence-transformers
+pytest>=8,<10
+pytest-asyncio>=1,<2

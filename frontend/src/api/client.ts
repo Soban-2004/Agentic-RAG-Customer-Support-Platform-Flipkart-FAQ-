@@ -1,3 +1,5 @@
+export type ImageAttachment = { data: string; mime_type: "image/jpeg" | "image/png" | "image/webp" }
+
 // Thin fetch wrapper -- cookies (the httpOnly JWT session cookie) ride along
 // automatically via `credentials: "include"` since the proxy (dev) / static
 // serving (prod) keeps everything same-origin. See vite.config.ts.
@@ -31,8 +33,10 @@ class ApiError extends Error {
   }
 }
 
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "")
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${BASE_PATH}${path}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     ...options,
@@ -72,8 +76,7 @@ export const api = {
     }),
   getThread: (id: string) => request<ThreadDetail>(`/api/threads/${id}`),
   deleteThread: (id: string) => request<void>(`/api/threads/${id}`, { method: "DELETE" }),
-  regeneratePrep: (id: string) =>
-    request<void>(`/api/threads/${id}/regenerate-prep`, { method: "POST" }),
+
 }
 
 export { ApiError }

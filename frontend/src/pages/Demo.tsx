@@ -1,158 +1,146 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { AnimatePresence, motion } from "framer-motion"
-import { ArrowDown } from "lucide-react"
-import type { ChatMessage } from "../api/client"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { ArrowDown, PanelLeftOpen, PanelLeftClose, Plus, ArrowUpRight } from "lucide-react"
+import type { ChatMessage, ImageAttachment } from "../api/client"
 import { EASE_UI } from "../lib/motion"
 import { useChatSocket } from "../hooks/useChatSocket"
 import { MessageBubble } from "../components/MessageBubble"
 import { TypingIndicator } from "../components/TypingIndicator"
 import { ChatInput } from "../components/ChatInput"
 import { StarterPrompts } from "../components/StarterPrompts"
+import { Brand } from "../components/Brand"
+import { ThemeSwitch } from "../components/ThemeSwitch"
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 80
-
 function localMessage(role: "user" | "assistant", content: string): ChatMessage {
   return { id: crypto.randomUUID(), role, content, created_at: new Date().toISOString() }
 }
 
-/** No-login, nothing-saved version of Chat.tsx -- talks to /ws/demo
- * (src/api/demo_ws.py) instead of an authenticated per-thread socket, so a
- * recruiter/evaluator can try the system in a few seconds with zero signup
- * friction. Deliberately simpler than Chat.tsx: no sidebar/thread list
- * (there's nothing to list -- the backend never writes this conversation
- * anywhere), no regenerate (that endpoint is Postgres-thread-backed), and
- * history is plain component state that a reload discards -- matching the
- * backend's in-memory-only session (build_ephemeral_memory). */
 export function Demo() {
+  const reducedMotion = useReducedMotion()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [freshMessageIds, setFreshMessageIds] = useState<Set<string>>(new Set())
   const [stepsByMessageId, setStepsByMessageId] = useState<Record<string, string[]>>({})
-
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia("(min-width: 768px)").matches)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [resetting, setResetting] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const asideRef = useRef<HTMLElement>(null)
   const atBottomRef = useRef(true)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
 
   const handleDone = useCallback((content: string, steps: string[]) => {
-    const msg = localMessage("assistant", content)
-    setMessages((prev) => [...prev, msg])
-    setStepsByMessageId((s) => ({ ...s, [msg.id]: steps }))
-    setFreshMessageIds((f) => new Set(f).add(msg.id))
+    const message = localMessage("assistant", content)
+    setMessages((previous) => [...previous, message])
+    setStepsByMessageId((previous) => ({ ...previous, [message.id]: steps }))
+    setFreshMessageIds((previous) => new Set(previous).add(message.id))
   }, [])
+  const { connected, connectionState, streaming, pending, statusLabel, error, send, reconnect } = useChatSocket("/ws/demo", handleDone)
 
-  // Fixed path, connects once on mount -- unlike Chat.tsx there's no
-  // per-thread identity to key the socket on.
-  const { connected, streaming, pending, statusLabel, send } = useChatSocket("/ws/demo", handleDone)
+  useEffect(() => {
+    if (connectionState !== "connecting") setResetting(false)
+  }, [connectionState])
+
+  useEffect(() => {
+    if (!sidebarOpen || !window.matchMedia("(max-width: 767px)").matches) return
+    const previous = document.activeElement as HTMLElement | null
+    asideRef.current?.querySelector<HTMLButtonElement>("button")?.focus()
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setSidebarOpen(false)
+      if (event.key !== "Tab") return
+      const elements = asideRef.current?.querySelectorAll<HTMLElement>("button, a[href]")
+      if (!elements?.length) return
+      const first = elements[0]
+      const last = elements[elements.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener("keydown", handleKey)
+    return () => { document.removeEventListener("keydown", handleKey); previous?.focus() }
+  }, [sidebarOpen])
 
   function scrollToBottom(smooth: boolean) {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" })
+    const element = scrollRef.current
+    if (!element) return
+    element.scrollTo({ top: element.scrollHeight, behavior: smooth && !reducedMotion ? "smooth" : "auto" })
     atBottomRef.current = true
     setShowScrollBtn(false)
   }
-
   function handleScroll() {
-    const el = scrollRef.current
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX
+    const element = scrollRef.current
+    if (!element) return
+    const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX
     atBottomRef.current = nearBottom
     setShowScrollBtn(!nearBottom)
   }
-
   useEffect(() => {
     if (atBottomRef.current) scrollToBottom(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, pending, statusLabel])
 
-  function handleSend(content: string) {
+  function handleSend(content: string, image?: ImageAttachment) {
+    if (streaming || resetting) return false
+    if (!connected || !send(content, { image })) { setSendError("Your message could not be sent. Reconnect and try again."); return false }
+    setSendError(null)
     atBottomRef.current = true
     setShowScrollBtn(false)
-    setMessages((prev) => [...prev, localMessage("user", content)])
-    send(content)
+    setMessages((previous) => [...previous, localMessage("user", content || "Photo attached")])
+    return true
   }
-
+  function newConversation() {
+    if (streaming) return
+    setMessages([])
+    setFreshMessageIds(new Set())
+    setStepsByMessageId({})
+    setSendError(null)
+    setResetting(true)
+    reconnect()
+    if (window.innerWidth < 768) setSidebarOpen(false)
+  }
   const showStarters = messages.length === 0 && !pending && !statusLabel
+  const sendDisabled = streaming || !connected || resetting
 
   return (
-    <div className="h-full bg-bg p-3 sm:p-4 lg:p-5">
-      <div className="flex h-full overflow-hidden rounded-2xl elevate-md">
-        <main className="relative flex flex-1 flex-col overflow-hidden bg-bg">
-          <header className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 border-b border-border bg-surface/70 px-4 py-3 backdrop-blur-md">
-            <span className="font-heading text-lg">🛍️</span>
-            <span className="font-heading font-semibold text-ink">Flipkart Support</span>
-            <span className="ml-1 rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand">
-              Demo -- nothing is saved
-            </span>
-            <span
-              className={`h-2 w-2 rounded-full transition-colors ${connected ? "bg-success" : "bg-muted"}`}
-              title={connected ? "Connected" : "Connecting..."}
-            />
-            <Link to="/signup" className="ml-auto text-sm font-medium text-brand hover:text-brand-hover">
-              Sign up to save your chats
-            </Link>
+    <div className="app-frame">
+      <div className="app-shell">
+        {sidebarOpen && <>
+          <button className="sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" tabIndex={-1} />
+          <aside className="sidebar" ref={asideRef} aria-label="Demo navigation">
+            <div className="sidebar-content">
+              <div className="sidebar-top"><Brand /><button className="sidebar-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar"><PanelLeftClose size={18} /></button></div>
+              <button className="sidebar-new" type="button" onClick={newConversation} disabled={streaming || resetting}><Plus size={17} /> New conversation</button>
+              <div className="sidebar-history"><p className="history-label">A little clarity, on demand</p><div className="demo-note"><span className="demo-note-marker" /><p>A question is all it takes.</p><span>Explore order tracking, returns, payments, and more. This demo keeps your conversation only while the page is open.</span></div></div>
+              <div className="sidebar-footer"><ThemeSwitch /><div className="sidebar-account"><span>Here to try things out?</span><Link to="/login">Log in <ArrowUpRight size={14} /></Link></div></div>
+            </div>
+          </aside>
+        </>}
+        <main className="chat-main">
+          <header className="chat-header">
+            {!sidebarOpen && <button className="sidebar-close" type="button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar" aria-expanded={sidebarOpen}><PanelLeftOpen size={18} /></button>}
+            <div className="chat-title"><Brand compact /></div>
+            <span className="demo-badge">Demo · chats aren’t saved</span>
+            <div className="connection-status" data-state={connectionState} role="status"><span className="connection-dot" />{connectionState === "ready" ? "Ready" : connectionState === "connecting" ? "Connecting" : "Offline"}</div>
+            <ThemeSwitch />
+            <Link to="/signup" className="header-cta">Save your chats <ArrowUpRight size={14} /></Link>
           </header>
-
-          <div ref={scrollRef} onScroll={handleScroll} className="relative flex-1 overflow-y-auto px-4 pb-4 pt-16">
+          <div ref={scrollRef} onScroll={handleScroll} className="chat-scroll">
             <AnimatePresence mode="wait">
-              <motion.div
-                initial={{ opacity: 0, x: 8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -8 }}
-                transition={{ duration: 0.25, ease: EASE_UI }}
-                className="flex h-full flex-col gap-4"
-              >
-                {showStarters ? (
-                  <StarterPrompts onPick={handleSend} />
-                ) : (
-                  <>
-                    {messages.map((m) => (
-                      <MessageBubble
-                        key={m.id}
-                        role={m.role}
-                        content={m.content}
-                        createdAt={m.created_at}
-                        userIdentifier="guest"
-                        isFresh={freshMessageIds.has(m.id)}
-                        steps={stepsByMessageId[m.id]}
-                      />
-                    ))}
-                    <AnimatePresence>
-                      {pending ? (
-                        <MessageBubble
-                          key="pending"
-                          role="assistant"
-                          content={pending}
-                          isStreaming
-                          userIdentifier="guest"
-                        />
-                      ) : streaming && statusLabel ? (
-                        <TypingIndicator key="status" label={statusLabel} />
-                      ) : null}
-                    </AnimatePresence>
-                  </>
-                )}
+              <motion.div initial={reducedMotion ? false : { opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, x: -8 }} transition={{ duration: reducedMotion ? 0 : 0.25, ease: EASE_UI }} className="conversation">
+                {showStarters ? <StarterPrompts onPick={handleSend} disabled={sendDisabled} /> : <>
+                  {messages.map((message) => <MessageBubble key={message.id} role={message.role} content={message.content} createdAt={message.created_at} userIdentifier="guest" isFresh={freshMessageIds.has(message.id)} steps={stepsByMessageId[message.id]} />)}
+                  <AnimatePresence>
+                    {pending ? <MessageBubble key="pending" role="assistant" content={pending} isStreaming userIdentifier="guest" /> : streaming && statusLabel ? <TypingIndicator key="status" label={statusLabel} /> : null}
+                  </AnimatePresence>
+                </>}
               </motion.div>
             </AnimatePresence>
-
             <AnimatePresence>
-              {showScrollBtn && (
-                <motion.button
-                  type="button"
-                  onClick={() => scrollToBottom(true)}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 8 }}
-                  className="fixed bottom-24 right-8 flex h-9 w-9 items-center justify-center rounded-full bg-surface text-brand elevate-md"
-                  aria-label="Scroll to latest"
-                >
-                  <ArrowDown size={16} />
-                </motion.button>
-              )}
+              {showScrollBtn && <motion.button type="button" onClick={() => scrollToBottom(true)} initial={reducedMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }} className="scroll-latest" aria-label="Scroll to latest"><ArrowDown size={16} /></motion.button>}
             </AnimatePresence>
           </div>
-
-          <ChatInput disabled={streaming} showChips={messages.length > 0} onSend={handleSend} />
+          {(sendError || error || connectionState === "offline") && <div className="chat-error" role="alert">{sendError || error || "You're offline. Reconnect to continue."}{connectionState === "offline" && <button type="button" onClick={() => { setSendError(null); reconnect() }}>Reconnect</button>}</div>}
+          <ChatInput disabled={sendDisabled} showChips={messages.length > 0} onSend={handleSend} />
         </main>
       </div>
     </div>

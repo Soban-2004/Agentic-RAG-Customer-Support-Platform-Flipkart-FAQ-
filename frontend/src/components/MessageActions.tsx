@@ -1,61 +1,41 @@
-import { useState } from "react"
-import { Check, Copy, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react"
+﻿import { useEffect, useRef, useState } from "react"
+import { Check, Copy, RotateCcw } from "lucide-react"
 
-const ICON_BTN =
-  "flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-brand-soft hover:text-brand transition-colors"
-
-export function MessageActions({
-  content,
-  isBot,
-  onRegenerate,
-}: {
+export function MessageActions({ content, isBot, onRegenerate }: {
   content: string
   isBot: boolean
   onRegenerate?: () => void
 }) {
   const [copied, setCopied] = useState(false)
-  // Thumbs are local-only UI state this pass -- not persisted server-side.
-  // Adding a real feedback endpoint is a cheap, optional follow-up (one
-  // column + one endpoint), deliberately not built now.
-  const [feedback, setFeedback] = useState<"up" | "down" | null>(null)
+  const [copyError, setCopyError] = useState("")
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  function handleCopy() {
-    navigator.clipboard.writeText(content).then(() => {
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+
+  async function handleCopy() {
+    setCopyError("")
+    try {
+      await navigator.clipboard.writeText(content)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setCopied(false)
+      setCopyError("Couldn't copy. Select the message text to copy it.")
+    }
   }
 
   return (
-    <div className="flex items-center gap-1 opacity-0 transition-opacity duration-[120ms] group-hover:opacity-100">
-      <button type="button" aria-label="Copy" onClick={handleCopy} className={ICON_BTN}>
-        {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+    <div className="message-actions">
+      <button type="button" aria-label={copied ? "Message copied" : "Copy message"} title={copied ? "Copied" : "Copy message"} onClick={handleCopy} className="message-action">
+        {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
       </button>
       {isBot && onRegenerate && (
-        <button type="button" aria-label="Regenerate" onClick={onRegenerate} className={ICON_BTN}>
-          <RotateCcw size={14} />
+        <button type="button" aria-label="Regenerate response" title="Regenerate response" onClick={onRegenerate} className="message-action">
+          <RotateCcw size={15} aria-hidden="true" />
         </button>
       )}
-      {isBot && (
-        <>
-          <button
-            type="button"
-            aria-label="Good response"
-            onClick={() => setFeedback((f) => (f === "up" ? null : "up"))}
-            className={`${ICON_BTN} ${feedback === "up" ? "text-success" : ""}`}
-          >
-            <ThumbsUp size={14} />
-          </button>
-          <button
-            type="button"
-            aria-label="Bad response"
-            onClick={() => setFeedback((f) => (f === "down" ? null : "down"))}
-            className={`${ICON_BTN} ${feedback === "down" ? "text-danger" : ""}`}
-          >
-            <ThumbsDown size={14} />
-          </button>
-        </>
-      )}
+      <span className={copyError ? "message-action-error" : "sr-only"} role="status">{copyError || (copied ? "Message copied." : "")}</span>
     </div>
   )
 }

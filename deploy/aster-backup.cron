@@ -1,0 +1,1 @@
+17 3 * * * ubuntu /opt/apps/aster/deploy/backup.sh >> /opt/apps/aster/backups/backup.log 2>&1
